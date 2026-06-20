@@ -1,0 +1,37 @@
+# Core ML
+torch>=2.6.0
+transformers>=4.50.0
+accelerate>=1.6.0
+bitsandbytes>=0.45.0
+
+# Multimodal
+pytesseract>=0.3.0
+Pillow>=11.0.0
+soundfile>=0.13.0
+librosa>=0.11.0
+pypdf>=5.0.0
+
+# RAG & Vector DB
+chromadb>=1.0.0
+sentence-transformers>=4.0.0
+langchain>=0.3.0
+langchain-community>=0.3.0
+langchain-huggingface>=0.1.0
+
+# Agentic Framework
+langgraph>=0.3.0
+langchain-core>=0.3.0
+
+# Data Processing
+datasets>=3.5.0
+pandas>=2.2.0
+numpy<2.0
+tqdm>=4.67.0
+python-frontmatter>=1.0.0
+
+# Web Interface
+streamlit>=1.30.0
+
+# Utilities
+python-dotenv>=1.1.0
+pydantic>=2.11.0

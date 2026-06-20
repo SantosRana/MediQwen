@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medigemma"
+version = "0.1.0"
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["rag*", "utils*", "config*", "agent*", "safety*", "models*", "preprocessing*"]
