@@ -40,7 +40,7 @@ def initialize_embeddings(
     # Configure embeddings
     hf_embeddings = HuggingFaceEmbeddings(
         model_name=model_name,
-        model_kwargs={"device": device} # Normalize vectors for better similarity
+        model_kwargs={"device": device} 
     )
     
     return hf_embeddings

@@ -6,6 +6,7 @@ import os
 import logging
 from typing import List, Dict, Optional
 from pathlib import Path
+import numpy as np
 import chromadb
 from chromadb.config import Settings
 from langchain_chroma import Chroma
@@ -15,7 +16,7 @@ from config.settings import (
     CHROMA_COLLECTION_NAME, 
     EMBEDDING_MODEL
 )
-from models.embeddings import initialize_embeddings
+from models.embeddings import initialize_embeddings, normalize_vectors
 from typing import Dict, Iterable, List, Union, Sequence
 from dataclasses import asdict
 from rag.knowledge_base import MedicalChunk
@@ -53,199 +54,124 @@ class MedicalVectorStore:
     Uses BGE embeddings for high-quality medical semantic search.
     """
     
-    def __init__(
-        self,
-        persist_dir: str = CHROMA_PERSIST_DIR,
-        collection_name: str = CHROMA_COLLECTION_NAME,
-        embedding_model: str = EMBEDDING_MODEL
-    ):
-        """Initialize the vector store."""
-        self.persist_dir = Path(persist_dir)
-        self.persist_dir.mkdir(parents=True, exist_ok=True)
-        self.collection_name = collection_name
-        self.embedding_model = embedding_model
+    def __init__(self):
+        self.persist_dir = CHROMA_PERSIST_DIR
+        self.collection_name = CHROMA_COLLECTION_NAME
+        self.embedding_model = EMBEDDING_MODEL
         
-        # Initialize embeddings via centralized factory
-        logger.info(f"🔧 Loading embeddings: {embedding_model}")
-        try:
-            self.embeddings = initialize_embeddings(model_name=embedding_model)
-            logger.info(f"✅ Embeddings initialized: {embedding_model}")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize embeddings: {e}")
-            raise
-            
-        # Initialize ChromaDB client with proper settings
-        self.client = chromadb.PersistentClient(
-            path=str(self.persist_dir),
-            settings=Settings(
-                anonymized_telemetry=False,
-                allow_reset=True,
-                is_persistent=True
-            )
-        )
+        logger.info(f"Initializing Persistent ChromaDB client at: {self.persist_dir}")
+        self.client = chromadb.PersistentClient(path=self.persist_dir)
         
-        # Lazy-load the collection on first access for memory efficiency
-        self._collection = None
+        # 1. Initialize the base LangChain wrapper
+        base_embeddings = initialize_embeddings(self.embedding_model)
         
+        # 2. Intercept and inject your normalize_vectors function directly into the wrapper methods
+        self._apply_custom_normalization(base_embeddings)
+        self.embeddings = base_embeddings
+        
+        self.vectorstore = None
+        # Ensure lazy collection initialization fires immediately upon setup
+        self._init_collection()
+
+    def _apply_custom_normalization(self, embeddings_obj):
+        """
+        Dynamically patches the LangChain embedding object's methods to ensure
+        all vector calculations pass through your custom NumPy normalization algorithm.
+        """
+        original_embed_documents = embeddings_obj.embed_documents
+        original_embed_query = embeddings_obj.embed_query
+
+        def custom_embed_documents(texts: List[str]) -> List[List[float]]:
+            raw_vecs = original_embed_documents(texts)
+            # Apply your working 2D NumPy normalization loop
+            norm_vecs = normalize_vectors(np.array(raw_vecs))
+            return norm_vecs.tolist()
+
+        def custom_embed_query(text: str) -> List[float]:
+            raw_vec = original_embed_query(text)
+            # Apply your working 1D NumPy normalization loop
+            norm_vec = normalize_vectors(np.array(raw_vec))
+            return norm_vec.tolist()
+
+        # Use object.__setattr__ to bypass Pydantic extra-fields validation locking
+        object.__setattr__(embeddings_obj, "embed_documents", custom_embed_documents)
+        object.__setattr__(embeddings_obj, "embed_query", custom_embed_query)
+       
     def _init_collection(self):
-        """
-        Initialize or load the collection safely.
-        Uses client.get_or_create_collection to prevent accidental data loss.
-        """
+        """Initializes the LangChain Chroma wrapper framework layer."""
         try:
-            collection_obj = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={"description": f"Medical KB Collection: {self.collection_name}"}
-            )
-            
-            # Wrap the raw collection in LangChain Chroma wrapper for consistent interface
             self.vectorstore = Chroma(
-                collection_name=self.collection_name,
-                embedding_function=self.embeddings,
                 client=self.client,
-                persist_directory=str(self.persist_dir)
+                collection_name=self.collection_name,
+                embedding_function=self.embeddings
             )
-            
-            count = collection_obj.count()
-            
-            if count == 0:
-                logger.info(f"➕ Initialized new collection '{self.collection_name}' (Empty)")
-            else:
-                logger.info(f"📦 Loaded existing collection '{self.collection_name}' with {count} documents")
-                
-            return count
-            
+            logger.info(f"Successfully loaded collection: '{self.collection_name}'")
         except Exception as e:
             logger.error(f"❌ Failed to initialize collection: {e}")
-            raise
-    
-    @property 
-    def simulated_collection(self):
-        """Simulate a .collection attribute for backward compatibility (returns proxy object)."""
-        try:
-            raw_coll = self.client.get_or_create_collection(name=self.collection_name)
-            return type('CollectionProxy', (), {'count': lambda s=raw_coll: s.count()})()
-        except Exception as e:
-            logger.error(f"❌ Error getting simulated collection count: {e}")
-            # Return a dummy object with 0 count if error occurs
-            class DummyCount:
-                def __init__(self, c): self.__dict__['count'] = lambda: c
-            return DummyCount(0)
+            raise e
 
-    def _validate_document(self, doc_dict: Dict) -> Optional[Dict]:
-        """Validate and sanitize a single document before adding."""
-        if not doc_dict:
-            return None
+    def add_documents(self, formatted_chunks: List[Dict]) -> bool:
+        """Adds flattened chunk dictionaries directly to ChromaDB."""
+        if not formatted_chunks:
+            logger.warning("Empty chunk list received.")
+            return False
             
-        content = doc_dict.get('content', '').strip()
-        if not content:
-            logger.warning(f"⚠️ Skipping empty document: {doc_dict.get('id', 'unknown')}")
-            return None
-        
-        metadata = doc_dict.get('metadata', {})
-        if not isinstance(metadata, dict):
-            metadata = {'source': 'unknown'}
+        try:
+            texts = [c['content'] for c in formatted_chunks]
+            metadatas = [c['metadata'] for c in formatted_chunks]
+            ids = [c['id'] for c in formatted_chunks]
             
-        return {
-            'id': doc_dict.get('id', Path(doc_dict.get('file_path', 'unknown')).stem),
-            'content': content,
-            'metadata': metadata
-        }
+            self.vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
+            logger.info(f"Successfully inserted {len(formatted_chunks)} nodes into Vector DB.")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed inserting chunks: {e}")
+            return False
     
-    def add_documents(self, documents: List[Dict], batch_size: int = 100):
-        """
-        Add documents to the vector store with validation.
-        
-        Args:
-            documents: List of dicts with 'id', 'content', 'metadata'
-            batch_size: Number of documents per batch
-        """
-        if not documents:
-            logger.info("ℹ️ No documents to add")
-            return 0
-            
-        logger.info(f"⬆️ Adding {len(documents)} documents to vector store...")
-        
-        valid_docs = []
-        for doc in documents:
-            validated_doc = self._validate_document(doc)
-            if validated_doc:
-                valid_docs.append(Document(
-                    page_content=validated_doc['content'],
-                    metadata=validated_doc['metadata'],
-                    id=validated_doc['id']
-                ))
-        
-        added_count = len(valid_docs)
-        skipped_count = len(documents) - added_count
-        
-        if skipped_count > 0:
-            logger.info(f"⚠️ Skipped {skipped_count} invalid documents")
-        
-        if not valid_docs:
-            logger.warning("⚠️ All documents were invalid or empty")
-            return 0
-            
-        # Add in batches
-        for i in range(0, len(valid_docs), batch_size):
-            batch = valid_docs[i:i+batch_size]
-            try:
-                self.vectorstore.add_documents(batch)
-                batch_num = i // batch_size + 1
-                logger.debug(f"   Added batch {batch_num}/{(len(valid_docs)-1)//batch_size + 1}")
-            except Exception as e:
-                logger.error(f"❌ Error adding batch {i}: {e}")
-                continue
-                
-        logger.info(f"✅ Added {added_count} valid documents total")
-        return added_count
-    
-    def similarity_search(
-        self, 
-        query: str, 
-        k: int = 5,
-        where: Optional[Dict] = None
-    ) -> List[Document]:
+    def similarity_search(self, query: str, k: int = 3, score_threshold: float = 0.6) -> List[Document]:
         """
         Search for similar documents.
         
         Args:
             query: Search query
             k: Number of results
-            where: Optional metadata filter (e.g., {"source": "emergency_protocol"})
+            score_threshold: Minimum similarity score for valid results
         """
         if not query:
             logger.warning("⚠️ Empty query provided")
             return []
             
         try:
-            results = self.vectorstore.similarity_search(
-                query=query,
-                k=k,
-                filter=where
-            )
-            logger.debug(f"🔍 Found {len(results)} results for query")
-            return results
+            # Switch to with_score to get the similarity metrics
+            results_with_scores = self.vectorstore.similarity_search_with_score(query, k=k)
+            
+            valid_docs = []
+            for doc, score in results_with_scores:
+                # Lower score in distance metrics usually means closer/better match
+                # Adjust threshold based on your embedding model's scale
+                logger.info(f"🎯 Chunk match candidate distance score: {score:.4f} for {doc.metadata.get('condition', 'unknown')}")
+                
+                # BGE large with cosine distance usually yields good matches below 0.5-0.6
+                if score <= score_threshold:
+                    valid_docs.append(doc)
+                    
+            logger.info(f"🔍 Validated {len(valid_docs)}/{len(results_with_scores)} chunks above confidence requirements.")
+            return valid_docs
+        
         except Exception as e:
-            logger.error(f"❌ Search error: {e}")
+            logger.error(f"❌ Search error occurred: {e}")
             return []
     
     def hybrid_search(
         self,
         query: str,
-        k: int = 5,
-        where: Optional[Dict] = None,
+        k: int = 3,
+        score_threshold: float = 0.6,
         lambda_mult: float = 0.7
     ) -> List[Document]:
         """
-        Hybrid search combining semantic similarity with keyword matching.
-        Uses MMR (Maximal Marginal Relevance) for diversity.
-        
-        Args:
-            query: Search query
-            k: Base number of results
-            where: Optional metadata filter
-            lambda_mult: Balance between relevance and diversity (0-1)
+        Diverse hybrid search combining similarity with Maximal Marginal Relevance (MMR).
+        Safely evaluates Euclidean/Cosine distance scores, dropping bad matches.
         """
         if not query:
             logger.warning("⚠️ Empty query for hybrid search")
@@ -253,33 +179,51 @@ class MedicalVectorStore:
             
         try:
             fetch_k = k * 3
+            
+            # 1. Fetch scoring candidates first using similarity_search_with_score
+            candidates_with_score = self.vectorstore.similarity_search_with_score(query, k=fetch_k)
+            
+            # 2. Filter out candidates that fail the confidence distance criteria
+            # Remember: Chroma L2/Cosine distance scales lower (closer to 0.0) for better matches
+            valid_candidates = []
+            for doc, score in candidates_with_score:
+                # logger.info(f"🎯 Hybrid candidate distance score: {score:.4f} for {doc.metadata.get('condition', 'unknown')}")
+                if score <= score_threshold:
+                    valid_candidates.append(doc)
+            
+            if not valid_candidates:
+                logger.info("ℹ️ Hybrid Search: Zero candidates cleared the score threshold bounds.")
+                return []
+                
+            # 3. If candidates pass, perform MMR diversity extraction manually on the validated subset
+            # We re-run MMR query directly to fetch the target clean 'k' count
             results = self.vectorstore.max_marginal_relevance_search(
                 query=query,
-                k=k,
-                fetch_k=fetch_k,
-                lambda_mult=lambda_mult,
-                filter=where
+                k=min(k, len(valid_candidates)),
+                fetch_k=len(valid_candidates),
+                lambda_mult=lambda_mult
             )
             
-            logger.debug(f"🔍 Hybrid search found {len(results)} diverse results")
+            logger.info(f"🔍 Diverse hybrid search finalized {len(results)} valid chunks.")
             return results
+            
         except Exception as e:
             logger.error(f"❌ Hybrid search error: {e}")
             return []
     
-    def get_retriever(self, search_kwargs: Optional[Dict] = None):
+    def get_retriever(self, score_threshold: float = 0.6, k: int = 3):
         """
-        Get a LangChain retriever for use in RAG pipelines.
+        Generates a calibrated LangChain retriever configured to enforce absolute
+        similarity threshold cutoff bounds to prevent hallucinated context streams.
         """
-        if search_kwargs is None:
-            search_kwargs = {"k": 5}
-            
         retriever = self.vectorstore.as_retriever(
-            search_type="mmr",
-            search_kwargs=search_kwargs
+            search_type="similarity_score_threshold",
+            search_kwargs={
+                "k": k,
+                "score_threshold": score_threshold  # Filters weak results at the retriever layer
+            }
         )
-        
-        logger.info("✅ Retriever created with MMR search")
+        logger.info(f"✅ Secure safety-capped retriever spawned (threshold={score_threshold}).")
         return retriever
     
     def delete_collection(self):
@@ -293,31 +237,24 @@ class MedicalVectorStore:
             raise
     
     def get_collection_stats(self) -> Dict:
-        """Get statistics about the collection."""
-        try:
-            if not hasattr(self, 'vectorstore') or self.vectorstore is None:
-                raw_coll = self.client.get_or_create_collection(name=self.collection_name)
+            """Returns runtime performance statistics via native client checks."""
+            try:
+                # Ensure lazy collection initialization fires immediately upon setup
+                collection = self.client.get_collection(name=self.collection_name)
                 return {
                     "name": self.collection_name,
-                    "count": raw_coll.count(),
-                    "metadata": raw_coll.metadata,
+                    "count": collection.count(),
+                    "metadata": collection.metadata or {},
                     "embedding_model": self.embedding_model
                 }
-            collection = self.vectorstore._collection if hasattr(self.vectorstore, '_collection') else None
-            return {
-                "name": self.collection_name,
-                "count": 0,
-                "metadata": {},
-                "embedding_model": self.embedding_model
-            }
-        except Exception as e:
-            logger.error(f"❌ Error getting stats: {e}")
-            return {
-                "name": self.collection_name,
-                "count": 0,
-                "metadata": {},
-                "embedding_model": self.embedding_model
-            }
+            except Exception as e:
+                logger.error(f"❌ Error getting stats: {e}")
+                return {
+                    "name": self.collection_name,
+                    "count": 0,
+                    "metadata": {},
+                    "embedding_model": self.embedding_model
+                }
     
     def clear_all(self):
         """Clear all documents from the collection."""

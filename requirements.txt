@@ -7,9 +7,8 @@ bitsandbytes>=0.45.0
 # Multimodal
 pytesseract>=0.3.0
 Pillow>=11.0.0
-soundfile>=0.13.0
-librosa>=0.11.0
 pypdf>=5.0.0
+opencv-python>=4.8.0
 
 # RAG & Vector DB
 chromadb>=1.0.0
@@ -17,6 +16,7 @@ sentence-transformers>=4.0.0
 langchain>=0.3.0
 langchain-community>=0.3.0
 langchain-huggingface>=0.1.0
+langsmith>=0.3.0
 
 # Agentic Framework
 langgraph>=0.3.0
@@ -28,6 +28,7 @@ pandas>=2.2.0
 numpy<2.0
 tqdm>=4.67.0
 python-frontmatter>=1.0.0
+requests>=2.34.0
 
 # Web Interface
 streamlit>=1.30.0
@@ -35,3 +36,8 @@ streamlit>=1.30.0
 # Utilities
 python-dotenv>=1.1.0
 pydantic>=2.11.0
+beautifulsoup4>=4.13.0
+duckduckgo_search>=2.0.0
+pygraphviz>=0.20.1
+matplotlib>=3.8.0
+python-dotenv>=1.1.0

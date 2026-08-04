@@ -1,0 +1,104 @@
+# ==========================================
+# 🐍 Python Artifacts & Cache Files
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==========================================
+# 🌐 Virtual Environments
+# ==========================================
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# ==========================================
+# 📊 Jupyter Notebook Checkpoints & Outputs
+# ==========================================
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# ==========================================
+# 🔒 Environment Variables & Secrets
+# ==========================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets.json
+
+# ==========================================
+# 🗄️ Local Databases & Vector Stores
+# ==========================================
+# Ignore local persistent ChromaDB storage
+chroma_db/
+*.sqlite3
+*.db
+
+# ==========================================
+# 🤖 Models & Heavy Binary Assets
+# ==========================================
+# Ignore large downloaded models or local weights
+*.bin
+*.onnx
+*.safetensors
+*.pt
+*.pth
+*.gguf
+
+# ==========================================
+# 📸 Temporary Test Assets & Logs
+# ==========================================
+# Test generated images and output cache
+tests/images/
+tests/tmp/
+*.log
+logs/
+
+# ==========================================
+# 🧪 Test Frameworks & Coverage
+# ==========================================
+.pytest_cache/
+.coverage
+htmlcov/
+.nox/
+.hypothesis/
+.ruff_cache/
+
+# ==========================================
+# 💻 IDEs & Editor Configurations
+# ==========================================
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
