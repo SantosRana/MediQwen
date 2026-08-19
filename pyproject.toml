@@ -3,9 +3,12 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "medigemma"
+name = "mediqwen"
 version = "0.1.0"
+description = "Privacy-first, offline multimodal clinical AI engine using LangGraph FSM"
+readme = "README.md"
+requires-python = ">=3.10"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]
-include = ["rag*", "utils*", "config*", "agent*", "safety*", "models*", "preprocessing*"]
+include = ["rag*", "utils*", "config*", "agent*", "safety*", "models*", "preprocessing*", "tools*"]

@@ -4,13 +4,14 @@
 [![LangGraph](https://img.shields.io/badge/LangGraph-Agentic%20FSM-orange.svg)](https://github.com/langchain-ai/langgraph)
 [![Ollama](https://img.shields.io/badge/Ollama-Local%20Inference-black.svg)](https://ollama.ai/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Interactive%20UI-FF4B4B.svg)](https://streamlit.io/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)]()
 
 ---
 
 ## Overview
 
 **MediQwen** is an **offline, privacy-first multimodal clinical assistant** powered by **Qwen 3.5** and built using **LangGraph's Finite State Machine (FSM)** architecture.
+
+In remote, mountainous, and low-resource regions—such as rural communities in Nepal and other parts of the Himalayas—access to qualified healthcare professionals, diagnostic resources, and internet connectivity can be severely limited. MediQwen could help address some of these challenges by running 100% locally on edge hardware with zero internet dependency, providing evidence-grounded triage, multimodal clinical image analysis, and medical guidance to off-grid health centers, community health workers, and field assistants.
 
 Unlike conventional chatbot pipelines, MediQwen combines deterministic state transitions, multimodal reasoning, hybrid retrieval, and multi-layer safety guardrails to provide reliable, evidence-grounded medical information while ensuring **all inference runs locally**.
 
@@ -24,29 +25,29 @@ Unlike conventional chatbot pipelines, MediQwen combines deterministic state tra
   - Runs entirely through Ollama with no cloud APIs; all patient data remains on the local device.
 
 - 🧠 **Finite State Machine Agent**
-  - LangGraph workflow for predictable execution, conversation routing, simplified debugging, and reliable state management
+  - LangGraph workflow for predictable execution, conversation routing, simplified debugging, and reliable state management.
 
 - 📷 **Multimodal Vision**
   - Supports clinical image understanding with automatic preprocessing, adaptive image normalization, and Base64 image handling.
 
 - 📚 **Hybrid Retrieval-Augmented Generation**
-  - Uses BAAI/bge-large-en-v1.5 embeddings with a local ChromaDB knowledge base, diversity-aware retrieval, and trusted web fallback when needed
+  - Uses BAAI/bge-large-en-v1.5 embeddings with a local ChromaDB knowledge base, diversity-aware retrieval, and trusted web fallback when needed.
 
 - 📝 **Optimized Knowledge Pipeline** 
-  - Converts raw medical documents into structured Markdown with hierarchical sectioning for faster indexing and more accurate retrieval
+  - Converts raw medical documents into structured Markdown with hierarchical sectioning for faster indexing and more accurate retrieval.
 
 - ⚡ **Intelligent Web Cache**
-  - Caches trusted medical content (NHS, WHO, Mayo Clinic) locally, reducing repeated retrieval latency from ~11 s to under 150 ms
+  - Caches trusted medical content (NHS, WHO, Mayo Clinic) locally, reducing repeated retrieval latency from ~11 s to under 150 ms.
   
 
 - 🛡️ **Clinical Safety Layer**
-  - Multi-layer safety with prompt injection detection, medical risk classification, and automatic emergency symptom prioritization
+  - Multi-layer safety with prompt injection detection, medical risk classification, and automatic emergency symptom prioritization.
 
 - 📊 **Interactive Streamlit Dashboard**
-  - Streamlit interface featuring chat history, image previews, latency monitoring, backend status, and one-click session management
+  - Streamlit interface featuring chat history, image previews, latency monitoring, backend status, and one-click session management.
 
 - 🧪 **Evaluation Framework**
-  - Automated LangSmith evaluation with dual local LLM judges for RAG grounding, safety, and behavioral regression testing
+  - Automated 8/8 scenario regression testing suite integrated with LangSmith.
 
 ---
 
@@ -54,29 +55,27 @@ Unlike conventional chatbot pipelines, MediQwen combines deterministic state tra
 
 ```mermaid
 flowchart TD
-    A[User Input<br/> Text / Image] --> B[1. Guardrail Check Node]
+    A[User Input<br/> Text / Image] --> B[1. Dialogue Manager FSM]
     
-    B -->|Violation / Injection| R[Offline Refusal Node<br/>Bypasses LLM ~0.01s]
-    B -->|Safe| C[2. Risk Classifier Node]
+    B -->|Unsafe / Injection| R[Safe Refusal<br/>Bypasses LLM ~0.01s]
+    B -->|Safe Input| C[2. Risk Classifier Node]
     
-    C -->|Sets risk_level = EMERGENCY| E[Prepend Emergency Banner Directive]
-    C -->|Sets risk_level = LOW / MEDIUM| M[3. Multimodal Processor Node]
-    E -.->|Injected into State| M
+    C -->|Peak Risk = EMERGENCY| E[3. Emergency Override<br/>Injects Priority Warning]
+    C -->|Peak Risk = LOW / MEDIUM / HIGH| M[4. Multimodal Processor Node]
+    E -->|State Update| M
     
-    M -->|Has Image| P[384x384 Resizing & Base64 Encoding]
-    M -->|Text Only| V[4. Local Vector RAG Node<br/>BAAI/bge-large-en-v1.5]
-    P -->  V
+    M -->|Has Image| P[Image Preprocessing]
+    M -->|Text Only| V[5. Local Vector RAG Node<br/>BAAI/bge-large-en-v1.5]
+    P --> V
     
-    V --> |Match Found<br/>Distance < Threshold| G[5. MediQwen Generator Node<br/>Local Ollama Execution]
-    V --> |No Match| W{5. Web Retrieval Node<br/>Whitelisted Sources}
+    V -->|Match Found| G[6. MediQwen Generator Node<br/>Local Ollama]
+    V -->|DB Miss & Online Mode| W[Web Fallback Scrapper<br/>NHS / WHO]
+    V -->|DB Miss & Offline Mode| R
     
-    W --> |Cache Hit| CH[In-Memory MD Store<br/>< 150ms]
-    W --> |Cache Miss| CM[Live Scraper & Restructure<br/>~11s Latency]
-    
+    W -->|Scrape & Embed| CH[ChromaDB Cache]
     CH --> G
-    CM --> G
     
-    G --> O[Streamlit UI Dashboard]
+    G --> O[Streamlit UI / API ]
 
     style R fill:#ffcccc,stroke:#ff0000,color:#000
     style E fill:#ff9999,stroke:#cc0000,color:#000
@@ -89,18 +88,11 @@ flowchart TD
 
 # 🔄 Processing Pipeline
 
-## 1. Safety Validation
+## 1. Dialogue Manager FSM & Safety Check
 
-Every request first passes through deterministic guardrails.
+Every user message first passes through the Dialogue Manager, which acts as the system’s traffic controller. It uses a Finite State Machine (FSM) to determine whether the request is casual conversation, a medical question, nutrition guidance, or an image-based medical request.
 
-The system detects:
-
-- Prompt injections
-- Jailbreak attempts
-- Unsafe instructions
-- Restricted content
-
-Unsafe requests are intercepted before reaching the language model.
+Potential prompt injections and other malicious inputs are blocked immediately by deterministic guardrails, before any LLM is called. Safe requests continue through the appropriate clinical processing pipeline.
 
 ---
 
@@ -108,14 +100,12 @@ Unsafe requests are intercepted before reaching the language model.
 
 Medical questions are classified into risk levels(EMERGENCY, MEDIUM, or LOW).
 
-Examples include:
+- Informational Query ("What is a rash?")         ──► LOW Risk
+- Active Self-Report ("I have a rash")            ──► MEDIUM Risk
+- Worsening Modifier ("My rash is spreading")     ──► HIGH Risk
+- Emergency Signature ("Crushing chest pain")     ──► EMERGENCY Risk
 
-- Chest pain
-- Stroke symptoms
-- Severe allergic reactions
-- Difficulty breathing
-
-High-risk cases automatically prepend emergency guidance to the generated response.
+Emergency-risk cases automatically prepend emergency guidance to the generated response.
 
 ---
 
@@ -146,7 +136,7 @@ The system searches its local medical knowledge base before using online resourc
 
 If relevant information is not found locally, MediQwen retrieves trusted online medical content.
 
-- Searches only verified sources such as NHS, WHO, etc
+- Searches only verified sources such as NHS, WHO, Mayo Clinic etc
 - Cleans and caches retrieved content locally for future request
 
 
@@ -167,20 +157,72 @@ The final response combines the user's query, clinical images (if provided), ret
 MediQwen/
 │
 ├── app/
-├── config/
+│   ├── api_server.py                 # FastAPI backend application 
+│   └── streamlit_interface.py        # Streamlit interactive UI
+│
+├── config/      
+│   ├── __init__.py                   # Config package initializer
+│   ├── settings.py                   # System hyperparameters
+│   └── skills.md                     # Clinical persona guidelines & system prompt directives
+│
+├── chroma_db/                        # Chroma Database
+│
+├── data/
+│   └── knowledge_base/               # Markdown Documents
+│
 ├── src/
 │   ├── agent/
-│   ├── preprocessing/
+│   │   ├── __init__.py               # Agent package initializer
+│   │   ├── graph.py                  # LangGraph FSM workflow compilation & switchboard routing
+│   │   ├── nodes.py                  # Graph execution nodes (triage, RAG, refusal, generation)
+│   │   └── state.py                  # Centralized agent state schema definition
+│   │
+│   ├── rag/
+│   │   ├── __init__.py               # RAG package initializer
+│   │   ├── vector_store.py           # ChromaDB hybrid vector search & distance thresholding
+│   │   └── knowledge_base.py         # Markdown document ingestion, chunking & formatting pipeline
+│   │
 │   ├── safety/
-│   ├── retrieval/
-│   └── evaluation/
+│   │   ├── __init__.py               # Safety package initializer
+│   │   ├── guardrails.py             # Pre-compiled regex prompt injection & jailbreak detectors
+│   │   └── risk_classifier.py        # Multi-layer domain vs. severity triage engine
+│   │
+│   ├── tools/
+│   │   ├── __init__.py               # Tools package initializer
+│   │   ├── helpers.py                # Formatting & utility functions
+│   │   ├── web_scraper.py            # Live NHS / Mayo Clinic scraper with auto-embedding
+│   │   └── system_prompt.py          # Dynamic system prompt generator with state directives
+│   │
+│   └── preprocessing/
+│       ├── __init__.py               # Preprocessing package initializer
+│       └── image_processor.py        # Image normalization, aspect-ratio resizing & PNG Base64 buffer
 │
-├── knowledge_base/
-├── chroma_db/
 ├── tests/
+│   ├── benchmark/
+│   │   ├── __init__.py               # Benchmark package initializer
+│   │   └── evaluate_pipeline.py      # Strict 8/8 scenario regression suite (LangSmith sync)
+│   │
+│   ├── integration/
+│   │   ├── __init__.py               # Integration package initializer
+│   │   └── test_graph.py             # End-to-end FSM state traversal & switchboard tests
+│   │
+│   └── unit/
+│       ├── __init__.py               # Unit test package initializer
+│       ├── test_api_server.py        # FastAPI server endpoint tests
+│       ├── test_guardrails.py        # Injection detector & safety filter unit tests
+│       ├── test_risk_classifier.py   # Triage severity & worsening escalation tests
+│       └── test_retriever.py         # Vector store search threshold & score boundary tests
+│
 ├── notebooks/
-├── requirements.txt
-└── README.md
+│   ├── 01_knowledge_base.ipynb       # KB preparation, chunking, and ChromaDB indexing
+│   ├── 02_agentic_rag.ipynb          # LangGraph state machine assembly & interactive execution
+│   └── 03_quality_evaluation.ipynb  # End-to-end benchmark execution & diagnostic analysis
+│
+├── Modelfile                         # Local Ollama model build file (Qwen 3.5 base)
+├── requirements.txt                  # Python dependency specifications
+├── .env                              # Local environment variables & API key configurations
+├── pyproject.toml                    # Editable local package installer configuration (`pip install -e .`)
+└── README.md                         # Primary project documentation & architecture guide
 ```
 
 ---
@@ -213,10 +255,11 @@ Linux / macOS
 source .venv/bin/activate
 ```
 
-## Install Dependencies
+## Install Dependencies and local editable package
 
 ```bash
 pip install -r requirements.txt
+pip install -e .
 ```
 
 ---
@@ -259,12 +302,20 @@ Run the evaluation pipeline
 python tests/benchmark/evaluate_pipeline.py
 ```
 
-Interactive evaluation notebooks are available in:
+## 📓 Interactive Notebook Workflows
 
-```
-notebooks/03_quality_evaluation.ipynb
-```
+The complete pipeline—from data ingestion to agentic RAG testing and quality evaluation—is available across three interactive Jupyter notebooks:
 
+* **`notebooks/01_knowledge_base.ipynb`**: Markdown ingestion, BAAI embeddings, ChromaDB indexing, and hybrid vector search validation.
+* **`notebooks/02_agentic_rag.ipynb`**: LangGraph FSM simulation, multimodal vision triage, web fallbacks, offline safe refusals, and injection blocks.
+* **`notebooks/03_quality_evaluation.ipynb`**: Ollama health checks and the strict 8/8 scenario production regression suite.
+---
+
+## 🎯 **Production Benchmark Performance:**
+> - **Evaluator Pass Rate:** 100% (8/8 LangSmith regression scenarios)
+> - **Prompt Injection Interception:** < 10 ms (Deterministic Layer 1 FSM Intercept)
+> - **Cached Web RAG Latency:** ~140 ms (78x speedup over live web scrapes)
+> - **Offline Fallback Reliability:** 100% grounded refusal rate on zero-chunk DB misses
 ---
 
 # 📊 Technologies
@@ -306,7 +357,7 @@ It is **not a medical device**, does **not diagnose diseases**, and should **not
 ## Future Work
 
 - Improved medical image classification
-- Expanded offline knowledge base
+- Expanded offline knowledge base for full offline architecture
 - Support for multilingual clinical queries
 - Enhanced evaluation benchmarks
 - Additional multimodal foundation models

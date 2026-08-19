@@ -1,43 +1,43 @@
 # Core ML
-torch>=2.6.0
-transformers>=4.50.0
-accelerate>=1.6.0
-bitsandbytes>=0.45.0
+torch==2.12.0
+transformers==5.9.0
+accelerate==1.13.0
 
-# Multimodal
-pytesseract>=0.3.0
-Pillow>=11.0.0
-pypdf>=5.0.0
-opencv-python>=4.8.0
+# Agent Architecture & FSM (LangGraph / LangChain)
+langgraph==1.2.1
+langchain==1.3.1
+langchain-community==0.4.2
+langchain-core==1.4.0
+langchain-chroma==1.1.0
+langchain-ollama==1.1.0
+langchain-huggingface==1.2.2
+langsmith==0.8.5
 
-# RAG & Vector DB
-chromadb>=1.0.0
-sentence-transformers>=4.0.0
-langchain>=0.3.0
-langchain-community>=0.3.0
-langchain-huggingface>=0.1.0
-langsmith>=0.3.0
+# Vector Store & Dense Embeddings
+chromadb==1.5.9
+sentence-transformers==5.5.1
+huggingface_hub==1.16.1
 
-# Agentic Framework
-langgraph>=0.3.0
-langchain-core>=0.3.0
+# Local Ollama LLM & Image Processing
+ollama==0.6.2
+pillow==12.2.0
+pybase64==1.4.3
 
-# Data Processing
-datasets>=3.5.0
-pandas>=2.2.0
-numpy<2.0
-tqdm>=4.67.0
-python-frontmatter>=1.0.0
-requests>=2.34.0
+# FastAPI Backend & Streamlit Web UI
+fastapi==0.138.0
+uvicorn==0.48.0
+streamlit==1.57.0
+python-multipart==0.0.29
 
-# Web Interface
-streamlit>=1.30.0
+# Web Fallback & Document Parsing
+requests==2.34.2
+beautifulsoup4==4.15.0
+pypdf==6.13.2
+python-frontmatter==1.3.0
+python-dotenv==1.2.2
+ddgs==9.14.4
 
-# Utilities
-python-dotenv>=1.1.0
-pydantic>=2.11.0
-beautifulsoup4>=4.13.0
-duckduckgo_search>=2.0.0
-pygraphviz>=0.20.1
-matplotlib>=3.8.0
-python-dotenv>=1.1.0
+# Testing & Package Setup
+pytest==9.1.1
+pytest-asyncio==0.22.0
+setuptools>=64.0.0

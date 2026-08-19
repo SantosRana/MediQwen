@@ -105,8 +105,7 @@ def check_backend_status():
 
 
 def render_risk_and_sources(sources, risk_level, show_emergency_banner=False):
-    """Shared renderer for the risk badge + reference-context expander,
-    used both for history replay and for a freshly-received response."""
+    """Shared renderer for risk badge + reference context expander."""
     if NO_CONTEXT_MARKER in sources:
         return
     if show_emergency_banner and risk_level and risk_level.lower() == "emergency":
@@ -115,7 +114,7 @@ def render_risk_and_sources(sources, risk_level, show_emergency_banner=False):
             "Seek immediate, real-world emergency medical care.</div>",
             unsafe_allow_html=True,
         )
-    if risk_level:
+    if risk_level and risk_level.lower() not in ["unrated/nutrition", ""]:
         risk = risk_level.lower()
         st.markdown(f"<span class='risk-badge risk-{risk}'>{risk} risk</span>", unsafe_allow_html=True)
     if sources:
@@ -167,8 +166,6 @@ with st.sidebar:
 
     # Image Asset Uploader
     st.subheader("📷 Multimodal Imagery")
-    # Keying on a rotating counter resets this widget after every send, so a
-    # previously attached photo doesn't silently get re-sent with later queries.
     uploaded_image = st.file_uploader(
         "Attach clinical photo or report",
         type=["png", "jpg", "jpeg"],
@@ -176,18 +173,18 @@ with st.sidebar:
         key=f"image_uploader_{st.session_state.uploader_key}",
     )
     if uploaded_image:
-        st.image(uploaded_image, caption="Attached Asset Preview", width="stretch")
+        st.image(uploaded_image, caption="Attached Asset Preview", use_container_width=True)
 
     st.divider()
 
-    # 🕒 RECENT QUERIES SECTION
+    # RECENT QUERIES SECTION
     st.subheader("🕒 Recent Queries")
     if st.session_state.recent_queries:
-        for idx, q in enumerate(reversed(st.session_state.recent_queries[-5:])):  # Display last 5 queries
-            # Truncate long queries for clean button labels
+        for idx, q in enumerate(reversed(st.session_state.recent_queries[-5:])):
             label = q if len(q) <= 28 else f"{q[:25]}..."
-            if st.button(f"🔍 {label}", key=f"recent_q_{idx}", width="stretch", help=q):
+            if st.button(f"🔍 {label}", key=f"recent_q_{idx}", use_container_width=True, help=q):
                 st.session_state.selected_recent = q
+                st.rerun()
     else:
         st.caption("No queries logged in this session yet.")
 
@@ -226,24 +223,25 @@ st.markdown(
 )
 
 
-# --- Render Quick Prompt Chips (If Session Empty) ---
+# --- Quick Prompt Chips ---
 if not st.session_state.messages:
     st.write("##### **Suggested Quick Start Queries:**")
     col1, col2, col3 = st.columns(3)
 
     selected_chip = None
     with col1:
-        if st.button("🔬 Analyze uploaded rash image", width="stretch"):
+        if st.button("🔬 Analyze uploaded rash image", use_container_width=True):
             selected_chip = "Please analyze the attached image and describe the visual skin characteristics."
     with col2:
-        if st.button("🥗 Heart-Healthy Diet Tips", width="stretch"):
+        if st.button("🥗 Heart-Healthy Diet Tips", use_container_width=True):
             selected_chip = "What are the core evidence-based guidelines for a heart-healthy Mediterranean diet?"
     with col3:
-        if st.button("📋 Explain hypertension guidelines", width="stretch"):
+        if st.button("📋 Explain hypertension guidelines", use_container_width=True):
             selected_chip = "Summarize standard clinical lifestyle recommendations for Stage 1 Hypertension."
 
     if selected_chip:
         st.session_state.selected_recent = selected_chip
+        st.rerun()
 
 
 # --- Render Conversation History ---
@@ -256,11 +254,9 @@ for msg in st.session_state.messages:
 
         st.markdown(msg["content"])
 
-        # Visual Image Thumbnail
         if msg.get("image"):
             st.image(msg["image"], caption="Attached Clinical Visual", width=320)
 
-        # Metadata Footer
         if msg.get("timestamp") or msg.get("latency"):
             latency_info = f" • ⚡ {msg['latency']}s" if msg.get("latency") else ""
             st.markdown(f"<div class='latency-tag'>{msg.get('timestamp', '')}{latency_info}</div>", unsafe_allow_html=True)
@@ -274,11 +270,9 @@ user_query = st.chat_input(chat_placeholder, disabled=not backend_online) or rec
 if user_query:
     start_time = time.time()
 
-    # Store query in recent queries list if not duplicate of the last entry
     if not st.session_state.recent_queries or st.session_state.recent_queries[-1] != user_query:
         st.session_state.recent_queries.append(user_query)
 
-    # Store and Render User Prompt
     user_msg = {
         "role": "user",
         "content": user_query,
@@ -311,7 +305,8 @@ if user_query:
                         "image_file": (uploaded_image.name, uploaded_image.getvalue(), uploaded_image.type)
                     }
 
-                res = requests.post(BACKEND_URL, data=form_data, files=files, timeout=120)
+                # 🎯 Increased timeout to 300s to match backend limit
+                res = requests.post(BACKEND_URL, data=form_data, files=files, timeout=300)
                 elapsed_time = round(time.time() - start_time, 2)
 
                 if res.status_code == 200:
@@ -332,21 +327,19 @@ if user_query:
                         "latency": elapsed_time
                     })
 
-                    # Reset the uploader so the image isn't re-attached to the next message.
                     if uploaded_image:
                         st.session_state.uploader_key += 1
 
-                    st.rerun()
                 else:
                     st.error(f"Backend Server Error: {res.text}")
             except Exception as e:
                 st.error(f"Cannot connect to MediQwen Backend Server. Ensure backend (`uvicorn app.api_server:app`) is running. Details: {e}")
 
-# --- Clear Session Action Below Chat ---
+# --- Clear Session Action ---
 st.divider()
 col_left, col_clear = st.columns([4, 1])
 with col_clear:
-    if st.button("🗑️ Clear Session", width="stretch"):
+    if st.button("🗑️ Clear Session", use_container_width=True):
         st.session_state.messages = []
         st.session_state.recent_queries = []
         st.session_state.uploader_key += 1

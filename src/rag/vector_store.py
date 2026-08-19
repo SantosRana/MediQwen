@@ -128,7 +128,7 @@ class MedicalVectorStore:
             logger.error(f"❌ Failed inserting chunks: {e}")
             return False
     
-    def similarity_search(self, query: str, k: int = 3, score_threshold: float = 0.6) -> List[Document]:
+    def similarity_search(self, query: str, k: int = 3, score_threshold: float = 0.75) -> List[Document]:
         """
         Search for similar documents.
         
@@ -162,13 +162,8 @@ class MedicalVectorStore:
             logger.error(f"❌ Search error occurred: {e}")
             return []
     
-    def hybrid_search(
-        self,
-        query: str,
-        k: int = 3,
-        score_threshold: float = 0.6,
-        lambda_mult: float = 0.7
-    ) -> List[Document]:
+    def hybrid_search(self, query: str, k: int = 3, score_threshold: float = 0.75,
+        lambda_mult: float = 0.7 ) -> List[Document]:
         """
         Diverse hybrid search combining similarity with Maximal Marginal Relevance (MMR).
         Safely evaluates Euclidean/Cosine distance scores, dropping bad matches.
@@ -183,11 +178,17 @@ class MedicalVectorStore:
             # 1. Fetch scoring candidates first using similarity_search_with_score
             candidates_with_score = self.vectorstore.similarity_search_with_score(query, k=fetch_k)
             
-            # 2. Filter out candidates that fail the confidence distance criteria
-            # Remember: Chroma L2/Cosine distance scales lower (closer to 0.0) for better matches
+            # 2. Filter out candidates that fail distance criteria and attach the score into metadata
             valid_candidates = []
+            score_map = {}  # Map doc content or id to score for lookup after MMR
+            
             for doc, score in candidates_with_score:
-                # logger.info(f"🎯 Hybrid candidate distance score: {score:.4f} for {doc.metadata.get('condition', 'unknown')}")
+                clean_score = round(float(score), 4)
+                doc.metadata["score"] = clean_score  # 👈 Attach score to document metadata
+                
+                # Store in lookup map using page content as identifier
+                score_map[doc.page_content] = clean_score
+                
                 if score <= score_threshold:
                     valid_candidates.append(doc)
             
@@ -195,8 +196,7 @@ class MedicalVectorStore:
                 logger.info("ℹ️ Hybrid Search: Zero candidates cleared the score threshold bounds.")
                 return []
                 
-            # 3. If candidates pass, perform MMR diversity extraction manually on the validated subset
-            # We re-run MMR query directly to fetch the target clean 'k' count
+            # 3. Perform MMR diversity extraction manually on the validated subset
             results = self.vectorstore.max_marginal_relevance_search(
                 query=query,
                 k=min(k, len(valid_candidates)),
@@ -204,14 +204,20 @@ class MedicalVectorStore:
                 lambda_mult=lambda_mult
             )
             
+            # 4. Preserve score in final MMR results from lookup map
+            for doc in results:
+                if doc.page_content in score_map:
+                    doc.metadata["score"] = score_map[doc.page_content]
+            
             logger.info(f"🔍 Diverse hybrid search finalized {len(results)} valid chunks.")
             return results
             
         except Exception as e:
             logger.error(f"❌ Hybrid search error: {e}")
             return []
+        
     
-    def get_retriever(self, score_threshold: float = 0.6, k: int = 3):
+    def get_retriever(self, score_threshold: float = 0.45, k: int = 3):
         """
         Generates a calibrated LangChain retriever configured to enforce absolute
         similarity threshold cutoff bounds to prevent hallucinated context streams.

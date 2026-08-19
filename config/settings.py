@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 
 # Model Configuration
-GEMMA_MODEL_ID="ollama/mediqwen:latest"  # Ollama model identifier for MediQwen
+MODEL_ID="ollama/mediqwen:latest"  # Ollama model identifier for MediQwen
 
 # Device
 DEVICE="auto"  # auto, cuda, cpu, mps
@@ -48,18 +48,6 @@ MEDICAL_DOMAINS = [
     "diabetes"
 ]
 
-# Structured output schema
-OUTPUT_SCHEMA = {
-    "possible_conditions": [],
-    "risk_level": "",
-    "confidence": "",
-    "advice": "",
-    "doctor_recommendation": False,
-    "urgency_note": "",
-    "disclaimer": "",
-    "sources": []
-}
-
 TRUSTED_WEB_SOURCES = {
     "who.int": {"name": "WHO", "score": 10},
     "nhs.uk": {"name": "NHS", "score": 10},
@@ -97,8 +85,48 @@ STRUCTURAL_PHRASES = [
 ]
 
 NUTRITION_KEYWORDS = {
-    "nutrition", "protein", "vitamin", "mineral", "diet", "calories", "food", "fat",
-    "carbohydrate", "fiber", "healthy eating", "meal", "nutrient"
+    # General nutrition
+    "nutrition",
+    "nutritional",
+    "diet",
+    "dietary",
+    "food",
+    "foods",
+    "eating",
+    "meal",
+    "meals",
+
+    # Healthy eating
+    "healthy diet",
+    "healthy eating",
+    "balanced diet",
+    "heart-healthy diet",
+    "heart healthy diet",
+    "healthy foods",
+    "nutritious",
+    "nutrient",
+
+    # Dietary components
+    "protein",
+    "fiber",
+    "fibre",
+    "carbohydrates",
+    "carbs",
+    "fat",
+    "fats",
+    "sodium",
+    "salt",
+    "sugar",
+    "calories",
+    "cholesterol",
+
+    # Dietary patterns
+    "mediterranean diet",
+    "low-sodium diet",
+    "low salt diet",
+    "plant-based diet",
+    "vegetarian diet",
+    "vegan diet",
 }
 
 ALLERGY_KEYWORDS = {
@@ -108,74 +136,75 @@ ALLERGY_KEYWORDS = {
 # Pre-compile clean word tokens extraction rule
 TOKEN_REGEX = re.compile(r"\b\w+\b")
 
-GENERIC_IMAGE_PHRASES = [
-    # Identification
-    "what is this",
-    "what's this",
-    "what could this be",
-    "what might this be",
-    "what does this look like",
-    "what am i looking at",
-    "what do you think this is",
-    "identify this",
-    "identify it",
-    "can you identify this",
-    "can you identify it",
-    "can you tell what this is",
-
-    # Opinion
-    "what do you think",
-    "thoughts",
-    "any thoughts",
-    "your thoughts",
-    "opinions",
-    "any idea",
-    "ideas",
-
-    # Normality
-    "is this normal",
-    "does this look normal",
-    "is this okay",
-    "does this look okay",
-    "is this bad",
-    "does this look bad",
-    "should i be worried",
-
-    # Medical uncertainty
-    "what could be causing this",
-    "what could cause this",
-    "any clue what this is",
-    "any idea what this is",
-    "what do you make of this",
-    "what is causing this",
-    "what is causing it",
-    "what is the reason for this",
+# Intents that trigger vector retrieval on follow-ups (Skill 1: Deferred Retrieval)
+RETRIEVAL_PHRASES = (
+    # Direct imperative / request phrases
+    "give me",
+    "give me a",
+    "provide",
+    "show me",
+    "recommend",
+    "diet for",
+    "plan for",
+    "guidelines for",
     
+    # Treatment / management
+    "treatment",
+    "what should i do",
+    "how should i treat",
+    "how is this treated",
+    "what is the treatment",
+    "treatment options",
+    "recommended treatment",
+    "management options",
+    "medication options",
+    "at home relief",
+    "how to cure",
 
-    # Very short prompts
-    "help",
-    "please help",
-    "look at this",
-    "check this",
-    "check this out",
-    "can you check this",
-    "can you look at this",
-    "take a look",
-    "have a look",
+    # Causes / prevention
+    "what causes this",
+    "what are the causes",
+    "what are the triggers",
+    "how can i prevent this",
 
-    # Single-word prompts
-    "help?",
-    "why",
-    "why?",
-    "advice",
-    "thoughts?",
-    "opinion",
-    "question",
+    # Evidence / guidelines
+    "guidelines",
+    "clinical guidelines",
+    "evidence-based",
+    "evidence based",
+    "evidence-based guidelines",
+    "evidence based guidelines",
+    "recommendations",
+    "clinical recommendations",
+    "management guidelines",
 
-    # Common follow-ups
-    "is this concerning",
-    "is this serious",
-    "is this something to worry about",
-    "should i see a doctor",
-    "can you explain this",
+    # Symptoms / warning signs
+    "symptoms",
+    "warning signs",
+    "what are the warning signs",
+    "when should i seek medical help",
+    "when should i see a doctor",
+
+    # Diagnosis / complications
+    "diagnosis",
+    "complications",
+    "what are the complications",
+    "side effects",
+    "risks",
+)
+
+AFFIRMATION_EXPRESSIONS = {
+    "yes", "yeah", "yep", "sure", "ok", "okay", "please", 
+    "tell me more", "go ahead", "yes please", "sure thing", "i would"
+}
+
+# Regex subject extractor with dynamic term fallback
+MEDICAL_SUBJECT_PATTERNS = [
+    r"\b(hives|urticaria)\b",
+    r"\b(eczema|dermatitis)\b",
+    r"\b(rash|lesion|welts?)\b",
+    r"\b(blister|burn)\b",
+    r"\b(ringworm|fungal|tinea)\b",
+    r"\b(psoriasis|acne|rosacea)\b",
+    r"\b(shingles|herpes|chickenpox)\b"
 ]

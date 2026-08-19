@@ -1,8 +1,8 @@
 # src/safety/risk_classifier.py
 """
-Data-Driven Risk Classification Engine for MediGemma.
-Accumulates all matching clinical rules to preserve compound symptoms, extracts the
-highest severity risk tier, and leverages pre-compiled guardrail proximity checks.
+Data-Driven Risk Classification Engine for MediQwen.
+Separates medical domain relevance from clinical risk severity using 
+accumulative rules, active self-reporting context, and worsening indicator escalations.
 """
 
 import re
@@ -39,42 +39,44 @@ class ClinicalRule:
 class RiskClassifier:
     """
     Accumulative Multi-Layered Triage Engine.
-    Gathers all matched clinical factors to assess complex symptom profiles.
+    Distinguishes informational medical queries (LOW) from active, severe,
+    or worsening clinical scenarios (MEDIUM / HIGH / EMERGENCY).
     """
 
     def __init__(self, enable_checks: bool = None):
         self.enable_checks = enable_checks if enable_checks is not None else settings.ENABLE_SAFETY_CHECKS
-        # Instantiate Guardrails to borrow the system's foundational pre-compiled safety patterns
         self.guardrails = Guardrails()
         self._initialize_rules_engine()
         logger.info(f"⚡ Accumulative Rules Engine Active. Safety Enforcement: {self.enable_checks}")
 
     def _initialize_rules_engine(self):
-        """Declarative local clinical taxonomy registry."""
+        """Declarative clinical taxonomy registry."""
         self.rules_registry: List[ClinicalRule] = [
-            # --- HIGH RISK CARDIO/RESPIRATORY INDICATORS (Score: 7-8) ---
+            # --- HIGH RISK CARDIO/RESPIRATORY/NEURO INDICATORS (Score: 7-8) ---
             ClinicalRule(r"\bsevere\b.*\bpain\b", RiskLevel.HIGH, 7, "general", "urgent_medical_consultation"),
             ClinicalRule(r"\bhigh\b.*\bfever\b|\bcoughing\b.*\bblood\b", RiskLevel.HIGH, 7, "infectious", "urgent_medical_consultation"),
             ClinicalRule(r"\bblood\b.*\b(stool|vomit)\b", RiskLevel.HIGH, 7, "gastrointestinal", "urgent_medical_consultation"),
             ClinicalRule(r"\b(sudden\s+weakness|confusion|disorientation)\b", RiskLevel.HIGH, 7, "neurological", "urgent_medical_consultation"),
             ClinicalRule(r"\b(seizure|convulsion|head\s+injury|concussion)\b", RiskLevel.HIGH, 7, "neurological", "urgent_medical_consultation"),
-            
-            # --- MEDIUM RISK TIER (Score: 4) ---
-            ClinicalRule(r"\b(fever|cough|vomiting|diarrhoea|rash)\b", RiskLevel.MEDIUM, 4, "general", "routine_medical_advice"),
+
+            # --- MEDIUM RISK TIER: ACTIVE ACUTE / SELF-REPORTED SYMPTOMS (Score: 4) ---
+            ClinicalRule(r"\b(i\s+have|my|suffering|experiencing|dealing\s+with)\b.*\b(fever|cough|vomiting|diarrhoea|rash|pain|lesion)\b", RiskLevel.MEDIUM, 4, "active_symptoms", "routine_medical_advice"),
             ClinicalRule(r"\babdominal\b.*\bpain\b|\bstomach\b.*\bache\b", RiskLevel.MEDIUM, 4, "gastrointestinal", "routine_medical_advice"),
-            ClinicalRule(r"\b(dizziness|lightheaded|earache|sore\s+throat)\b", RiskLevel.MEDIUM, 4, "general", "routine_medical_advice"),
-            ClinicalRule(r"\b(hypertension|blood\s+pressure|asthma|infection)\b", RiskLevel.MEDIUM, 4, "chronic", "routine_medical_advice")
+            ClinicalRule(r"\b(hypertension|blood\s+pressure|asthma|active\s+infection)\b", RiskLevel.MEDIUM, 4, "chronic", "routine_medical_advice"),
+            
+            # --- LOW RISK TIER: INFORMATIONAL MEDICINE & BASE SYMPTOM INQUIRIES (Score: 1-2) ---
+            ClinicalRule(r"\b(fever|cough|vomiting|diarrhoea|rash|dizziness|lightheaded|earache|sore\s+throat)\b", RiskLevel.LOW, 2, "general_medicine", "general_information"),
         ]
 
         self.WORSENING_INDICATORS = [
             "worse", "worsening", "getting worse", "increasing", 
-            "not improving", "cannot tolerate", "spread", "spreading", "intense"
+            "not improving", "cannot tolerate", "spread", "spreading", "rapidly", "intense", "severe"
         ]
 
     def classify_query(self, text: str) -> Dict[str, Any]:
         """
         Processes inputs across multiple safety validation layers.
-        Accumulates all matching indicators to ensure compound clinical scenarios are preserved.
+        Evaluates emergency guardrails, local clinical rules, and active worsening modifiers.
         """
         if not self.enable_checks:
             return {
@@ -85,39 +87,51 @@ class RiskClassifier:
         text_clean = re.sub(r"\s+", " ", text.lower()).strip()
         
         # ─── LAYER 1: FOUNDATIONAL GUARDRAILS PROXIMITY SCANS ───
-        # Restores foundational precedence for the global emergency arrays
         matched_guardrail_patterns = [
             pattern.pattern for pattern in self.guardrails.compiled_emergencies
             if pattern.search(text_clean)
         ]
         
         # ─── LAYER 2: LOCAL RULES ACCUMULATION MATRIX ───
-        # Accumulates all matches rather than short-circuiting on the first hit
         matched_rules: List[ClinicalRule] = [
             rule for rule in self.rules_registry if rule.compiled_regex.search(text_clean)
         ]
 
-        # ─── LAYER 3: MULTI-VARIABLE CONTEXT EVALUATION ───
-        if matched_guardrail_patterns or matched_rules:
-            # Determine the baseline values from guardrails layer if it fires
+        # ─── LAYER 3: SINGLE-TURN WORSENING / SEVERITY ESCALATION SCAN ───
+        detected_worsening = [
+            indicator for indicator in self.WORSENING_INDICATORS
+            if re.search(rf"\b{re.escape(indicator)}\b", text_clean)
+        ]
+
+        if matched_guardrail_patterns or matched_rules or detected_worsening:
             highest_risk = RiskLevel.EMERGENCY if matched_guardrail_patterns else RiskLevel.LOW
             highest_score = 10 if matched_guardrail_patterns else 0
             primary_action = "immediate_emergency_services" if matched_guardrail_patterns else "none"
             
-            # Map out and audit every matched element
             all_triggers = list(matched_guardrail_patterns)
             categories = {"emergency_guardrail"} if matched_guardrail_patterns else set()
 
-            # Process all matched rules to extract the highest severity peak
             for rule in matched_rules:
                 all_triggers.append(rule.raw_pattern)
                 categories.add(rule.category)
-                
-                # Check severity ranks to find the highest risk level
                 if rule.risk_level.severity_rank > highest_risk.severity_rank:
                     highest_risk = rule.risk_level
                     highest_score = rule.score
                     primary_action = rule.action
+
+            # Single-turn escalation: Elevate LOW -> MEDIUM or MEDIUM -> HIGH on worsening terms
+            if detected_worsening and highest_risk != RiskLevel.EMERGENCY:
+                all_triggers.extend([f"worsening_indicator:{w}" for w in detected_worsening])
+                categories.add("worsening_escalation")
+                
+                if highest_risk == RiskLevel.LOW:
+                    highest_risk = RiskLevel.MEDIUM
+                    highest_score = max(highest_score, 4)
+                    primary_action = "routine_medical_advice"
+                elif highest_risk == RiskLevel.MEDIUM:
+                    highest_risk = RiskLevel.HIGH
+                    highest_score = max(highest_score, 7)
+                    primary_action = "urgent_medical_consultation"
 
             logger.warning(
                 f"🎯 Triage Evaluation Complete. Matched Triggers Count: {len(all_triggers)} | "
@@ -125,7 +139,7 @@ class RiskClassifier:
             )
 
             return {
-                "risk_level": highest_risk.value,
+                "risk_level": highest_risk.value.upper(),
                 "score": max(highest_score, 1 if highest_risk == RiskLevel.LOW else highest_score),
                 "triggers": all_triggers,
                 "action_required": primary_action,
@@ -135,9 +149,9 @@ class RiskClassifier:
                 "trigger_count": len(all_triggers)
             }
                 
-        # Baseline low risk fallback
+        # Baseline LOW risk fallback for casual chat / non-symptom queries
         return {
-            "risk_level": RiskLevel.LOW.value,
+            "risk_level": RiskLevel.LOW.value.upper(),
             "score": 1,
             "triggers": [],
             "action_required": "general_information",
@@ -149,8 +163,7 @@ class RiskClassifier:
 
     def classify_with_history(self, current_query: str, history: Any) -> Dict[str, Any]:
         """
-        Dynamically calculates history log risk tracking variables.
-        Protects against string duplication using sets cardinality verification.
+        Dynamically calculates multi-turn history risk tracking variables.
         """
         base_classification = self.classify_query(current_query)
         
