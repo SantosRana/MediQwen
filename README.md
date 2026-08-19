@@ -318,6 +318,12 @@ The complete pipeline—from data ingestion to agentic RAG testing and quality e
 > - **Offline Fallback Reliability:** 100% grounded refusal rate on zero-chunk DB misses
 ---
 
+## 🎥 Demo
+
+A recorded demonstration of the system:
+
+- MediQwen Streamlit Interface: [View Demo](https://drive.google.com/file/d/1NHUlvXD4VJuJJ6OCb0r3D5H5NbM7cRTB/preview)
+
 # 📊 Technologies
 
 | Component | Technology |
