@@ -104,19 +104,33 @@ def check_backend_status():
         return False
 
 
-def render_risk_and_sources(sources, risk_level, show_emergency_banner=False):
+def render_risk_and_sources(sources, risk_level, show_emergency_banner=False, is_medical=False, dialog_state="chat"):
     """Shared renderer for risk badge + reference context expander."""
     if NO_CONTEXT_MARKER in sources:
         return
-    if show_emergency_banner and risk_level and risk_level.lower() == "emergency":
+        
+    # Standardize string states
+    normalized_dialog = str(dialog_state).lower().strip() if dialog_state else "chat"
+    normalized_risk = str(risk_level).lower().strip() if risk_level else ""
+
+    # Emergency banners always take precedence
+    if show_emergency_banner and normalized_risk == "emergency":
         st.markdown(
             "<div class='emergency-banner'>🚨 CRITICAL EMERGENCY PATTERN DETECTED: "
             "Seek immediate, real-world emergency medical care.</div>",
             unsafe_allow_html=True,
         )
-    if risk_level and risk_level.lower() not in ["unrated/nutrition", ""]:
-        risk = risk_level.lower()
-        st.markdown(f"<span class='risk-badge risk-{risk}'>{risk} risk</span>", unsafe_allow_html=True)
+
+    # Render risk badge ONLY for active clinical/multimodal turns
+    should_show_risk = (
+        is_medical 
+        and normalized_dialog in {"clinical", "multimodal_triage"}
+        and normalized_risk not in {"unrated/nutrition", ""}
+    )
+
+    if should_show_risk:
+        st.markdown(f"<span class='risk-badge risk-{normalized_risk}'>{normalized_risk} risk</span>", unsafe_allow_html=True)
+
     if sources:
         with st.expander("📄 Viewed Reference Context"):
             for src in sources:
