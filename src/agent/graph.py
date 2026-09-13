@@ -1,8 +1,8 @@
 # src/agent/graph.py
 """
-Production Orchestrator Graph for MediGemma.
+Production Orchestrator Graph for MediQwen.
 Enforces non-linear, data-driven execution routing, strict validation gates,
-and provides clear tracking arrays for debugging.
+and visual-first risk classification.
 """
 
 import logging
@@ -25,8 +25,8 @@ workflow = StateGraph(AgentState)
 
 # Register All Concrete Working Processing Nodes
 workflow.add_node("dialogue_manager", run_dialogue_manager)
-workflow.add_node("classifier", run_risk_classification)
 workflow.add_node("multimodal_processor", run_multimodal_processing)
+workflow.add_node("classifier", run_risk_classification)
 workflow.add_node("retriever", run_vector_search)
 workflow.add_node("web_search_tool", run_web_search_tool)
 workflow.add_node("safe_refusal_node", safe_refusal_node)
@@ -39,49 +39,49 @@ workflow.add_node("generator", run_qwen_generation)
 
 def dialogue_fsm_switchboard(state: AgentState) -> str:
     """
-    Evaluates primary state machine status.
-    Routes blocked queries directly to refusal, and all authorized interactions
-    to risk classification and pipeline processing.
+    Routes execution based on the Dialogue Manager FSM state.
+
+    - BLOCKED → Safe refusal
+    - CHAT → Generator (Bypasses classification & retrieval)
+    - CLINICAL → Risk classifier / Multimodal router
+    - MULTIMODAL_TRIAGE → Multimodal processor
     """
     active_state = state.get("dialog_state", "chat").lower().strip()
-    
+
     if active_state == "blocked":
+        logger.info("🛑 FSM Switchboard: [BLOCKED] → Safe Refusal")
         return "blocked_refusal"
-        
-    logger.info(f"🧬 FSM Switchboard Execution: Routing via state [{active_state.upper()}] to Risk Classifier.")
-    return "authorized_pipeline"
 
+    if active_state == "chat":
+        logger.info("💬 FSM Switchboard: [CHAT] → Generator")
+        return "generator"
 
-def multimodal_image_router(state: AgentState) -> str:
-    """
-    Checks if an authorized image payload exists before running the preprocessor.
-    """
-    trace = state.get("routing_trace", [])
-    process_image = bool(state.get("process_image", False))
-    
-    if process_image:
-        state["routing_trace"] = trace + ["classifier -> multimodal_processor"]
+    # Route multimodal turns to the visual preprocessor first
+    if active_state == "multimodal_triage":
+        logger.info("📸 FSM Switchboard: [MULTIMODAL] → Pre-processing Image Before Classification")
         return "multimodal_processor"
-    
-    state["routing_trace"] = trace + ["classifier -> text_only_retriever"]
-    return "retriever"
+
+    if active_state == "clinical":
+        logger.info("🩺 FSM Switchboard: [CLINICAL] → Risk Classifier")
+        return "classifier"
+
+    logger.warning(
+        f"⚠️ Unknown dialogue state [{active_state.upper()}]. Defaulting to Generator."
+    )
+    return "generator"
 
 
 def knowledge_base_router(state: AgentState) -> str:
     """
     Evaluates intent-driven retrieval status and enforces evidence grounding.
-    - If retrieval is NOT requested (e.g., Turn 1 visual triage or casual chat),
-      routes directly to generator.
-    - If retrieval IS requested but local DB returns 0 chunks and offline,
-      routes directly to safe_refusal_node to prevent hallucinated answers.
     """
     trace = state.get("routing_trace", [])
     requires_retrieval = state.get("requires_retrieval", False)
     context = state.get("retrieved_context", [])
-    is_emergency = state.get("risk_level", "low").lower() == "emergency"
+    is_emergency = str(state.get("risk_level", "LOW")).upper() == "EMERGENCY"
     is_online = state.get("is_online", False)
 
-    # 1. Deferred RAG Short-Circuit: Skip retrieval if user did not ask for clinical context
+    # 1. Deferred RAG Short-Circuit: Skip retrieval if not requested
     if not requires_retrieval:
         logger.info("⏩ Retrieval not requested for this turn. Short-circuiting directly to Generator.")
         state["routing_trace"] = trace + ["retriever -> no_retrieval_needed -> generator"]
@@ -93,7 +93,7 @@ def knowledge_base_router(state: AgentState) -> str:
         state["routing_trace"] = trace + ["retriever -> context_found -> generator"]
         return "generator"
 
-    # 3. Emergency Fallback: Prioritize immediate safety response over missing DB
+    # 3. Emergency Fallback: Prioritize safety response over missing DB
     if is_emergency:
         logger.warning("🚨 EMERGENCY DATABASE MISS: Routing directly to Generator to deliver safety warnings.")
         state["routing_trace"] = trace + ["retriever -> emergency_db_miss -> generator"]
@@ -132,30 +132,25 @@ def web_search_validation_router(state: AgentState) -> str:
 
 workflow.add_edge(START, "dialogue_manager")
 
-# Node 1 Master Switchboard Edge Routing
+# 1. Master FSM Switchboard Edge Routing
 workflow.add_conditional_edges(
-    "dialogue_manager", 
+    "dialogue_manager",
     dialogue_fsm_switchboard,
     {
-        "blocked_refusal": "safe_refusal_node", 
-        "authorized_pipeline": "classifier"
-    }
-)
-
-# Node 2 Exit Conditional Edge Routing
-workflow.add_conditional_edges(
-    "classifier",
-    multimodal_image_router,
-    {
+        "blocked_refusal": "safe_refusal_node",
+        "generator": "generator",
         "multimodal_processor": "multimodal_processor",
-        "retriever": "retriever"
+        "classifier": "classifier",
     }
 )
 
-# Node 3 Exit Edge Routing (Direct to Retriever)
-workflow.add_edge("multimodal_processor", "retriever")
+# 2. Multimodal Processor Edge (Always feeds populated visual feature state into Risk Classifier)
+workflow.add_edge("multimodal_processor", "classifier")
 
-# Node 4 Exit Conditional Edge Routing
+# 3. Classifier Edge (Always feeds full multimodal risk state into Retriever)
+workflow.add_edge("classifier", "retriever")
+
+# 4. Retriever Exit Conditional Edge Routing
 workflow.add_conditional_edges(
     "retriever",
     knowledge_base_router,
@@ -166,7 +161,7 @@ workflow.add_conditional_edges(
     }
 )
 
-# Node 5 Exit Conditional Edge Routing
+# 5. Web Search Validation Edge Routing
 workflow.add_conditional_edges(
     "web_search_tool",
     web_search_validation_router,

@@ -14,6 +14,7 @@ import base64
 import io
 
 # Framework Imports
+from src.agent.skills_loader import load_skill
 from src.agent.state import AgentState
 from src.safety.risk_classifier import RiskClassifier
 from src.safety.guardrails import Guardrails
@@ -49,6 +50,7 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     
     user_query = state.get("user_query", "").strip()
     image_path = state.get("image_path")
+    has_image = bool(image_path)
     query_lower = user_query.lower()
     
     previous_state = state.get("dialog_state", "chat").lower().strip()
@@ -59,13 +61,14 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     # -------------------------------------------------------------
     # 🎯 DECISION STEP 1: Safety Blocked?
     # -------------------------------------------------------------
-    is_safe, output_text = guardrails.validate_input(user_query)
+    is_safe, output_text = guardrails.validate_input(user_query, has_image=has_image)
     if not is_safe:
         return {
             "is_safe": False,
             "dialog_state": "blocked",
             "requires_retrieval": False,
             "agent_response": output_text,
+            "process_image": False,
             "routing_trace": trace + ["dialogue_mgr -> blocked_refusal"]
         }
 
@@ -443,10 +446,21 @@ def safe_refusal_node(state: AgentState) -> dict:
     Generates tailored, safe refusal responses depending on whether 
     a request was blocked by safety guardrails or simply missing KB context.
     """
+    
+    # Preserve pre-generated refusal/crisis text from Guardrails
+    existing_response = state.get("agent_response")
+    if existing_response:
+        return {
+                "agent_response": existing_response,
+                "context_sources": ["System Safety Guardrail"]
+            }
+        
+        
     query = state.get("user_query", "")
     is_safe = state.get("is_safe", True)
     risk_level = state.get("risk_level", "low")
     
+
     # Case 1: Flagged by Safety/Guardrail Policy (Code, Malicious, Non-Medical)
     if not is_safe or risk_level == "BLOCKED":
         refusal_text = (
@@ -477,161 +491,200 @@ def safe_refusal_node(state: AgentState) -> dict:
 
 def run_qwen_generation(state: AgentState) -> Dict[str, Any]:
     """
-    Node 7: Context & Skill-Aware MediQwen Response Generation.
-    Delegates detailed behavioral logic to Skills specification.
+    Node 7: Executes MediQwen local LLM generation via Ollama /api/chat.
+    Dynamically injects targeted skill specifications and RAG context into the System Message boundary.
     """
-    logger.info("=== [Node: MediQwen Response Generation] ===")
-
-    # -------------------------------------------------------------
-    # 0. Short-circuit direct Dialogue Manager responses
-    # -------------------------------------------------------------
-    if state.get("agent_response"):
-        return {
-            "agent_response": state["agent_response"],
-            "clinical_subject": state.get("clinical_subject"),
-            "dialog_state": state.get("dialog_state", "chat"),
-            "requires_retrieval": state.get("requires_retrieval", False),
-        }
-
-    # -------------------------------------------------------------
-    # Extract state
-    # -------------------------------------------------------------
-    image_payload = state.get("processed_image_payload")
-    clinical_subject = state.get("clinical_subject")
-    requires_retrieval = state.get("requires_retrieval", False)
+    user_query = state.get("user_query", "")
+    retrieved_context = state.get("retrieved_context", [])
     dialog_state = state.get("dialog_state", "chat")
-    risk_tier = state.get("risk_level", "low").upper()
-    user_query = state.get("user_query", "").strip()
+    requires_retrieval = state.get("requires_retrieval", False)
+    risk_tier = state.get("risk_level", "LOW")
+    risk_metadata = state.get("risk_metadata", {})
+    image_payload = state.get("processed_image_payload", None)
+    clinical_subject = state.get("clinical_subject", None)
 
-    subject_str = clinical_subject or "Unspecified"
+    # Extract base64 payload cleanly (avoiding file paths)
+    clean_base64 = None
+    if image_payload:
+        raw_payload = str(image_payload)
+        clean_base64 = (
+            raw_payload.split("base64,", 1)[-1]
+            if "base64," in raw_payload
+            else raw_payload
+        )
 
-    # ===================================================================
-    # 1. MULTIMODAL TRIAGE
-    # ===================================================================
-    if image_payload and dialog_state == "multimodal_triage":
-        user_content_prompt = f"""[APPLY SKILL 1: TENTATIVE MULTIMODAL TRIAGE]
-
-PATIENT INQUIRY: "{user_query}"
-
-Provide a cautious, tentative visual assessment based strictly on observable features in the uploaded asset. 
-NEVER state a confirmed diagnosis. End with 2–3 interactive follow-up choices (e.g., triggers, treatment, or warning signs)."""
-
-    # ===================================================================
-    # 2. CASUAL CONVERSATION
-    # ===================================================================
-    elif dialog_state == "chat":
-        user_content_prompt = f"""[CASUAL CHAT]
-
-USER INPUT: "{user_query}"
-
-Respond warmly, naturally, and concisely in 1–2 sentences. Do NOT introduce medical disclaimers or retrieval notes."""
-
-    # ===================================================================
-    # 3. EVIDENCE-GROUNDED RESPONSE
-    # ===================================================================
+    # -------------------------------------------------------------
+    # 1. Dynamic Skill Selection (Hierarchy: Multimodal -> Evidence -> Clinical -> Chat)
+    # -------------------------------------------------------------
+    active_skill_prompt = ""
+    if dialog_state == "multimodal_triage":
+        active_skill_prompt = load_skill("multimodal_triage")
     elif requires_retrieval:
-        retrieved_chunks = state.get("retrieved_context", [])
-        
-        if retrieved_chunks:
-            context_str = "\n\n".join(
-                f"Evidence {i + 1}:\n{chunk}"
-                for i, chunk in enumerate(retrieved_chunks)
-            )
-        else:
-            context_str = "NO_APPROVED_CLINICAL_CONTEXT_AVAILABLE"
+        active_skill_prompt = load_skill("evidence_synthesis")
+    elif dialog_state == "clinical":
+        active_skill_prompt = load_skill("clinical_triage")
 
-        user_content_prompt = f"""[APPLY SKILL 2 & SKILL 3: EVIDENCE-GROUNDED CLINICAL RESPONSE]
-
-ACTIVE TRIAGE RISK: {risk_tier}
-CLINICAL SUBJECT: {subject_str}
-
-### RETRIEVED CLINICAL CONTEXT
-{context_str}
-
-### PATIENT INQUIRY
-"{user_query}"
-
-INSTRUCTION: Ground your answer strictly in the context above. If NO_APPROVED_CLINICAL_CONTEXT_AVAILABLE is shown, state exactly:
-"I don't have sufficient approved clinical context to provide a reliable answer or recommendation for this specific situation." """
-
-    # ===================================================================
-    # 4. GENERAL MEDICAL CONVERSATION
-    # ===================================================================
+    # -------------------------------------------------------------
+    # 2. System Instruction Assembly (Enforces Trust Boundary)
+    # -------------------------------------------------------------
+    if dialog_state == "chat":
+        system_instruction = (
+            "You are MediQwen. "
+            "Respond naturally, warmly, and concisely. "
+            "Do not introduce unnecessary medical information."
+        )
     else:
-        user_content_prompt = f"""[APPLY SKILL 3 & SKILL 4: GENERAL MEDICAL DISCUSSION]
+        base_system_prompt = (
+            "You are MediQwen, an evidence-grounded clinical AI assistant.\n"
+            "The application's guardrails, risk classification, and routing decisions are authoritative.\n"
+            "Do not override or reinterpret system-provided state."
+        )
 
-ACTIVE TRIAGE RISK: {risk_tier}
-CLINICAL SUBJECT: {subject_str}
+        subject_str = clinical_subject or "Unspecified"
+        
+        # Format context into system prompt if present
+        context_str = ""
+        if retrieved_context and len(retrieved_context) > 0:
+            formatted_docs = "\n\n".join(
+                [doc.page_content if hasattr(doc, "page_content") else str(doc) for doc in retrieved_context]
+            )
+            context_str = f"\n\n=== APPROVED CLINICAL CONTEXT ===\n{formatted_docs}"
 
-### PATIENT INQUIRY
-"{user_query}"
-
-INSTRUCTION: Provide clear, empathetic guidance based on established conversation context. Do NOT invent clinical guidelines, prescriptions, or dosages."""
+        system_instruction = (
+            f"{base_system_prompt}\n\n"
+            f"ACTIVE DIALOGUE STATE: {dialog_state}\n"
+            f"ACTIVE TRIAGE RISK: {risk_tier}\n"
+            f"CLINICAL SUBJECT: {subject_str}\n\n"
+            f"=== ACTIVE SKILL ===\n"
+            f"{active_skill_prompt}"
+            f"{context_str}"
+        )
 
     # -------------------------------------------------------------
-    # Prepare image payload
+    # 3. User Message & Ollama Chat Payload (/api/chat)
     # -------------------------------------------------------------
-    raw_payload = state.get("processed_image_payload") or ""
-
-    clean_base64 = (
-        raw_payload.split("base64,", 1)[-1]
-        if "base64," in raw_payload
-        else raw_payload
-    )
+    user_content_prompt = user_query.strip()
 
     payload = {
         "model": "mediqwen:latest",
-        "prompt": user_content_prompt,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_instruction,
+            },
+            {
+                "role": "user",
+                "content": user_content_prompt,
+            }
+        ],
+        "think": False,  # Disable Qwen3.5 reasoning trace generation
         "options": {
             "temperature": 0.2,
-            "num_ctx": 8192,
+            "num_ctx": 4096,
+            "num_predict": 512,
         },
         "stream": False,
     }
 
+    # Attach base64 image inside message array for visual turns
     if clean_base64 and dialog_state == "multimodal_triage":
-        payload["images"] = [clean_base64]
+        payload["messages"][1]["images"] = [clean_base64]
 
     # -------------------------------------------------------------
-    # Execute Ollama generation
+    # 4. Execute Generation & Guardrails
     # -------------------------------------------------------------
+    generation_start = time.perf_counter()
+
     try:
+        logger.info(
+            "🤖 Starting Ollama chat generation | model=%s | prompt_chars=%d | think=False",
+            payload["model"],
+            len(user_content_prompt),
+        )
+
         response = requests.post(
-            "http://localhost:11434/api/generate",
+            "http://localhost:11434/api/chat",
             json=payload,
-            timeout=240,
+            timeout=(10, 600),
         )
 
         response.raise_for_status()
-        generated_text = response.json().get("response", "").strip()
+        response_data = response.json()
 
-        # Extract & persist clinical subject from Turn 1 visual assessment
+        message = response_data.get("message", {})
+        generated_text = message.get("content", "").strip()
+
+        logger.info(
+            "🔍 Ollama response | done=%s | reason=%s | content_chars=%d | eval_count=%s",
+            response_data.get("done"),
+            response_data.get("done_reason"),
+            len(generated_text),
+            response_data.get("eval_count"),
+        )
+
+        if not generated_text:
+            logger.error("❌ Ollama returned empty content.")
+            if dialog_state == "chat":
+                generated_text = "Hello! I'm MediQwen. How can I help you today?"
+            elif risk_tier == "EMERGENCY":
+                generated_text = (
+                    "Your symptoms may require urgent medical attention. "
+                    "Please seek emergency medical care immediately."
+                )
+            else:
+                generated_text = (
+                    "I was unable to generate a reliable response. "
+                    "Please try again or rephrase your question."
+                )
+
+        generation_latency_ms = (time.perf_counter() - generation_start) * 1000.0
+
+        # Extract clinical subject from multimodal response if present
         extracted_subject = clinical_subject
-
         if dialog_state == "multimodal_triage" and not extracted_subject:
             gen_lower = generated_text.lower()
-
             for pattern in MEDICAL_SUBJECT_PATTERNS:
                 match = re.search(pattern, gen_lower)
                 if match:
                     extracted_subject = match.group(1)
-                    logger.info(
-                        "🏷️ Extracted clinical subject '%s' from Turn 1 visual assessment.",
-                        extracted_subject,
-                    )
                     break
 
+        risk_metadata["is_medical"] = (dialog_state in {"clinical", "multimodal_triage"})
+        risk_metadata["risk_level"] = risk_tier
+
+        final_safe_text = guardrails.apply_output_guardrails(
+            generated_text,
+            risk_metadata=risk_metadata,
+        )
+
         return {
-            "agent_response": generated_text,
+            "agent_response": final_safe_text,
             "clinical_subject": extracted_subject,
+            "generation_success": True,
+            "generation_error": None,
+            "generation_latency_ms": generation_latency_ms,
         }
 
     except Exception as err:
-        logger.error(f"❌ Generation Error: {err}")
+        generation_latency_ms = (time.perf_counter() - generation_start) * 1000.0
+        logger.exception("❌ Ollama generation failed after %.2f ms | error=%s", generation_latency_ms, str(err))
+
+        if dialog_state == "chat":
+            fallback_text = "Sorry, I couldn't generate a response right now. Please try again."
+        elif risk_tier == "EMERGENCY":
+            fallback_text = "Your symptoms may require urgent medical attention. Please seek emergency medical care immediately."
+        else:
+            fallback_text = "I was unable to generate a reliable response. Please try again."
+
+        risk_metadata["is_medical"] = (dialog_state in {"clinical", "multimodal_triage"})
+        risk_metadata["risk_level"] = risk_tier
+
+        final_fallback = guardrails.apply_output_guardrails(fallback_text, risk_metadata=risk_metadata)
+
         return {
-            "agent_response": (
-                "An internal system error occurred. "
-                "Please seek appropriate medical assistance if your "
-                "symptoms are concerning."
-            )
+            "agent_response": final_fallback,
+            "clinical_subject": clinical_subject,
+            "generation_success": False,
+            "generation_error": str(err),
+            "generation_latency_ms": generation_latency_ms,
         }

@@ -14,17 +14,24 @@ from src.safety.guardrails import Guardrails
 
 logger = logging.getLogger("risk_classifier")
 
+
 class RiskLevel(Enum):
-    EMERGENCY = "emergency"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
+    EMERGENCY = "EMERGENCY"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
 
     @property
     def severity_rank(self) -> int:
         """Assigns an integer rank to compare enum severities programmatically."""
-        mapping = {RiskLevel.EMERGENCY: 4, RiskLevel.HIGH: 3, RiskLevel.MEDIUM: 2, RiskLevel.LOW: 1}
+        mapping = {
+            RiskLevel.EMERGENCY: 4,
+            RiskLevel.HIGH: 3,
+            RiskLevel.MEDIUM: 2,
+            RiskLevel.LOW: 1
+        }
         return mapping[self]
+
 
 class ClinicalRule:
     """Represents a structured clinical assessment and triage routing rule."""
@@ -35,6 +42,7 @@ class ClinicalRule:
         self.category = category
         self.action = action
         self.compiled_regex = re.compile(pattern, re.IGNORECASE)
+
 
 class RiskClassifier:
     """
@@ -87,10 +95,10 @@ class RiskClassifier:
         text_clean = re.sub(r"\s+", " ", text.lower()).strip()
         
         # ─── LAYER 1: FOUNDATIONAL GUARDRAILS PROXIMITY SCANS ───
-        matched_guardrail_patterns = [
-            pattern.pattern for pattern in self.guardrails.compiled_emergencies
-            if pattern.search(text_clean)
-        ]
+        emergency_eval = self.guardrails.detect_emergency(text_clean)
+        matched_guardrail_patterns = []
+        if emergency_eval.get("is_emergency"):
+            matched_guardrail_patterns = [emergency_eval.get("matched_pattern")]
         
         # ─── LAYER 2: LOCAL RULES ACCUMULATION MATRIX ───
         matched_rules: List[ClinicalRule] = [
@@ -135,30 +143,34 @@ class RiskClassifier:
 
             logger.warning(
                 f"🎯 Triage Evaluation Complete. Matched Triggers Count: {len(all_triggers)} | "
-                f"Assigned Risk Peak: {highest_risk.value.upper()}"
+                f"Assigned Risk Peak: {highest_risk.value}"
             )
 
             return {
-                "risk_level": highest_risk.value.upper(),
+                "risk_level": highest_risk.value,
                 "score": max(highest_score, 1 if highest_risk == RiskLevel.LOW else highest_score),
                 "triggers": all_triggers,
                 "action_required": primary_action,
                 "requires_doctor": highest_score >= 4 or highest_risk == RiskLevel.EMERGENCY,
                 "classification_mode": "accumulative_rules_engine",
                 "clinical_categories": list(categories),
-                "trigger_count": len(all_triggers)
+                "trigger_count": len(all_triggers),
+                "is_emergency": highest_risk == RiskLevel.EMERGENCY,
+                "guardrail_emergency": bool(matched_guardrail_patterns)
             }
                 
         # Baseline LOW risk fallback for casual chat / non-symptom queries
         return {
-            "risk_level": RiskLevel.LOW.value.upper(),
+            "risk_level": RiskLevel.LOW.value,
             "score": 1,
             "triggers": [],
             "action_required": "general_information",
             "requires_doctor": False,
             "classification_mode": "default",
             "clinical_categories": ["general_medicine"],
-            "trigger_count": 0
+            "trigger_count": 0,
+            "is_emergency": False,
+            "guardrail_emergency": False
         }
 
     def classify_with_history(self, current_query: str, history: Any) -> Dict[str, Any]:
@@ -211,7 +223,8 @@ class RiskClassifier:
                     "action_required": action,
                     "requires_doctor": True,
                     "history_escalated": True,
-                    "escalation_triggers": list(unique_indicators)
+                    "escalation_triggers": list(unique_indicators),
+                    "is_emergency": escalated_level == RiskLevel.EMERGENCY.value
                 })
                 
                 logger.warning(

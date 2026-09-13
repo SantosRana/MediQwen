@@ -34,7 +34,7 @@ image_processor = MedicalImageProcessor()
 
 
 @server.post("/chat")
-def handle_clinical_query(  # 👈 CHANGED from 'async def' to 'def' to offload execution to a threadpool
+def handle_clinical_query(
     user_query: str = Form(...),
     is_online: str = Form("True"),
     modality: Optional[str] = Form("general"), 
