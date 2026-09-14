@@ -42,26 +42,27 @@ image_processor = MedicalImageProcessor()
 
 def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     """
-    Node 1: Hardened Dialogue Manager FSM.
-    Implements strict decision priority ordering with decoupled topic taxonomy
-    (medical/nutrition) and retrieval intent detection.
+    Node 1: Dialogue Manager FSM.
+    Validates safety boundaries, tracks subject memory, and determines
+    authoritative dialogue state and retrieval flags.
     """
     logger.info("=== [Node: Dialogue Manager FSM] ===")
-    
+
     user_query = state.get("user_query", "").strip()
     image_path = state.get("image_path")
     has_image = bool(image_path)
-    query_lower = user_query.lower()
-    
-    previous_state = state.get("dialog_state", "chat").lower().strip()
+
+    previous_state = str(state.get("dialog_state", "chat")).lower().strip()
     existing_subject = state.get("clinical_subject")
     followup_pending = state.get("followup_pending", False)
     trace = state.get("routing_trace", []) or []
 
-    # -------------------------------------------------------------
-    # 🎯 DECISION STEP 1: Safety Blocked?
-    # -------------------------------------------------------------
-    is_safe, output_text = guardrails.validate_input(user_query, has_image=has_image)
+    # STEP 1 — SAFETY BOUNDARY
+    is_safe, output_text = guardrails.validate_input(
+        user_query,
+        has_image=has_image,
+    )
+
     if not is_safe:
         return {
             "is_safe": False,
@@ -69,103 +70,95 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
             "requires_retrieval": False,
             "agent_response": output_text,
             "process_image": False,
-            "routing_trace": trace + ["dialogue_mgr -> blocked_refusal"]
+            "routing_trace": trace + ["dialogue_mgr -> blocked_refusal"],
         }
 
-    # Extract taxonomy concepts & retrieval intent independently
-    has_medical_concepts = any(
-        re.search(rf"\b{re.escape(k)}\b", query_lower)
-        for k in guardrails.MEDICAL_HEALTH_KEYWORDS
+    # STEP 2 — SCOPE / TAXONOMY CLASSIFICATION
+    scope = guardrails.classify_scope(
+        user_query,
+        has_image=has_image,
     )
-    is_nutrition_query = any(
-        re.search(rf"\b{re.escape(k)}\b", query_lower)
-        for k in NUTRITION_KEYWORDS
-    )
-    has_retrieval_intent = any(phrase in query_lower for phrase in RETRIEVAL_PHRASES)
 
-    # Dynamic Clinical Subject Extraction / State Preservation
+    query_lower = user_query.lower().strip()
+
+    # STEP 3 — SUBJECT MEMORY TRACKING
     clinical_subject = existing_subject
+
     for pattern in MEDICAL_SUBJECT_PATTERNS:
         match = re.search(pattern, query_lower)
         if match:
             clinical_subject = match.group(1)
             break
 
-    current_state = previous_state
-    requires_retrieval = False
+     # STEP 4 — RETRIEVAL INTENT
+    has_retrieval_intent = any(
+        phrase in query_lower for phrase in CLINICAL_INFORMATION_INTENTS
+    )
+    
+    # STEP 5 — FSM ROUTING
+    current_state = "chat"
+    followup_pending = False
     is_affirmation_response = False
+    agent_response = ""
 
-    # -------------------------------------------------------------
-    # 🎯 DECISION STEP 2: Explicit Retrieval Request?
-    # -------------------------------------------------------------
+    # Explicit retrieval request
     if has_retrieval_intent:
         current_state = "clinical"
-        requires_retrieval = True
-        followup_pending = False
-        logger.info("🔍 Explicit retrieval request detected. Setting dialog_state=clinical, requires_retrieval=True.")
 
-    # -------------------------------------------------------------
-    # 🎯 DECISION STEP 3: Image Present + First Turn?
-    # -------------------------------------------------------------
-    elif image_path and previous_state in ["chat", "idle"]:
+    # First-turn image
+    elif has_image and previous_state in {"chat", "idle"}:
         current_state = "multimodal_triage"
-        requires_retrieval = False
-        followup_pending = True  # Enable follow-up tracking for Turn 2
-        logger.info("📸 Image asset detected on Turn 1. Setting dialog_state=multimodal_triage, requires_retrieval=False.")
+        followup_pending = True
 
-    # -------------------------------------------------------------
-    # 🎯 DECISION STEP 4: Pending "Yes" / Affirmation Response?
-    # -------------------------------------------------------------
-    elif followup_pending and query_lower in AFFIRMATION_EXPRESSIONS:
-        current_state = "clinical"
-        requires_retrieval = False
-        is_affirmation_response = True
-        followup_pending = False
-        logger.info("💬 User affirmation ('Yes') received. Prompting for explicit topic selection.")
-
-    # -------------------------------------------------------------
-    # 🎯 DECISION STEP 5: Clinical or Nutrition Conversation
-    # -------------------------------------------------------------
+    # Image follow-up affirmation
     elif (
-        has_medical_concepts 
-        or is_nutrition_query 
-        or previous_state == "clinical"
+        followup_pending
+        and query_lower in AFFIRMATION_EXPRESSIONS
     ):
+
         current_state = "clinical"
-        requires_retrieval = has_retrieval_intent
         followup_pending = False
-        logger.info(
-            f"🩺 Clinical/nutrition conversation turn. "
-            f"nutrition={is_nutrition_query}, retrieval={requires_retrieval}"
-        )
+        is_affirmation_response = True
 
-    # -------------------------------------------------------------
-    # 🎯 DECISION STEP 6: General Casual Chat
-    # -------------------------------------------------------------
-    else:
-        current_state = "chat"
-        requires_retrieval = False
-        followup_pending = False
-
-    # Restrict image reprocessing strictly to Turn 1 multimodal triage
-    process_image = (
-        image_path is not None 
-        and current_state == "multimodal_triage"
-    )
-
-    # Formulate instant response if Turn 2 is a generic affirmation ("Yes")
-    agent_response = ""
-    if is_affirmation_response:
         agent_response = (
-            "I'd be glad to provide more details. Which would you like to explore?\n\n"
+            "I'd be glad to provide more details. "
+            "Which would you like to explore?\n\n"
             "• **Common causes and triggers**\n"
             "• **Treatment and self-care options**\n"
             "• **Warning signs that need urgent attention**"
         )
-    
-    # Enforce vector retrieval across all clinical and multimodal turns
-    requires_retrieval = (current_state in {"clinical", "multimodal_triage"})
-    
+
+    # Medical / Nutrition
+    elif scope in {"MEDICAL", "NUTRITION"}:
+        current_state = "clinical"
+
+    # Continue clinical conversation
+    elif (
+        previous_state == "clinical"
+        and existing_subject ):
+        current_state = "clinical"
+
+    # Default
+    else:
+        current_state = "chat"
+
+    # STEP 6 — PROCESSING FLAGS
+    process_image = (
+        has_image and current_state == "multimodal_triage"
+    )
+
+    # Don't retrieve for generic affirmation response
+    if is_affirmation_response:
+        requires_retrieval = False
+
+    # Clinical knowledge retrieval
+    elif current_state == "clinical":
+        requires_retrieval = True
+
+    # Initial image triage does not automatically need RAG
+    else:
+        requires_retrieval = False
+
     return {
         "is_safe": True,
         "dialog_state": current_state,
@@ -177,8 +170,11 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
         "image_path": image_path if process_image else None,
         "process_image": process_image,
         "routing_trace": trace + [
-            f"dialogue_mgr: state={current_state} | requires_retrieval={requires_retrieval} | "
-            f"nutrition={is_nutrition_query} | subject={clinical_subject}"
+            f"dialogue_mgr: "
+            f"scope={scope} | "
+            f"state={current_state} | "
+            f"retrieval={requires_retrieval} | "
+            f"subject={clinical_subject}"
         ]
     }
 
@@ -638,7 +634,7 @@ System safety, risk classification, routing decisions, and guardrails are author
     # 8. Build Ollama Chat Payload
     # -------------------------------------------------------------
     payload = {
-        "model": "mediqwen:latest",
+        "model": MODEL_ID,
         "messages": [
             {
                 "role": "system",

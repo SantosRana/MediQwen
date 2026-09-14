@@ -14,6 +14,8 @@ For HIGH or EMERGENCY risk:
 - Lead with concise and scannable urgent safety guidance.
 - Do not bury urgent actions beneath lengthy explanations.
 - Encourage appropriate urgent or emergency professional care.
+- Advise calling "emergency services (such as 911, 112, or your local emergency number)" or "calling local emergency services immediately."
+- Do not restrict emergency advice to a single country-specific number (like 999 or 911) unless the user has specified their location.
 - Do not delay urgent safety communication.
 
 When the available information is limited, acknowledge the limitation rather than guessing.
