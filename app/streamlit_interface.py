@@ -113,6 +113,10 @@ def render_risk_and_sources(sources, risk_level, show_emergency_banner=False, is
     normalized_dialog = str(dialog_state).lower().strip() if dialog_state else "chat"
     normalized_risk = str(risk_level).lower().strip() if risk_level else ""
 
+    # Do not show context expander if the turn was blocked by guardrails
+    if dialog_state == "blocked" or not sources or "System Safety Guardrail" in sources:
+        return
+    
     # Emergency banners always take precedence
     if show_emergency_banner and normalized_risk == "emergency":
         st.markdown(

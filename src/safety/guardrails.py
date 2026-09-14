@@ -66,7 +66,7 @@ class Guardrails:
         "bruise", "redness", "inflammation", "acne",
         "pimples", "breakout", "blackheads", "ulcer",
         "lesion", "tightness", "pressure", "crushing",
-        "numb", "weak", "exhaustion", "light headed", "cold", "flu", "infection", "allergy", "allergic reaction",
+        "numb", "weak", "exhaustion", "light headed", "cold", "colds", "flu", "infection", "allergy", "allergic reaction",
         "turning blue", "blue", "red", "yellow", "pale", "sweaty", "clammy", "chest tightness", "headache",
         "migraine", "blurred vision", "double vision", "vision loss", "hearing loss", "ringing in ears"
     }
