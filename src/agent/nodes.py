@@ -18,6 +18,7 @@ from src.agent.skills_loader import load_skill
 from src.agent.state import AgentState
 from src.safety.risk_classifier import RiskClassifier
 from src.safety.guardrails import Guardrails
+from src.safety.scope_classifier import BGEScopeClassifier, classify_scope_with_gate
 from src.rag.vector_store import MedicalVectorStore
 from src.tools.web_scraper import MedicalWebScraper
 from config.settings import *
@@ -31,6 +32,7 @@ logger = logging.getLogger("medigemma_nodes")
 # --- Initialize Core Components Once (Saves Memory & Inits Database) ---
 risk_classifier = RiskClassifier()
 guardrails = Guardrails()
+scope_classifier = BGEScopeClassifier()
 vector_store = MedicalVectorStore()
 web_scraper = MedicalWebScraper() 
 image_processor = MedicalImageProcessor() 
@@ -43,8 +45,8 @@ image_processor = MedicalImageProcessor()
 def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     """
     Node 1: Dialogue Manager FSM.
-    Validates safety boundaries, tracks subject memory, and determines
-    authoritative dialogue state and retrieval flags.
+    Enforces safety boundaries, semantic scope classification, and context resolution.
+    Determines authoritative dialogue state, subject memory, and retrieval flags.
     """
     logger.info("=== [Node: Dialogue Manager FSM] ===")
 
@@ -54,10 +56,14 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
 
     previous_state = str(state.get("dialog_state", "chat")).lower().strip()
     existing_subject = state.get("clinical_subject")
-    followup_pending = state.get("followup_pending", False)
+    
+    # Read incoming follow-up pending flag from previous graph state
+    followup_pending_in = state.get("followup_pending", False)
     trace = state.get("routing_trace", []) or []
 
+    # =============================================================
     # STEP 1 — SAFETY BOUNDARY
+    # =============================================================
     is_safe, output_text = guardrails.validate_input(
         user_query,
         has_image=has_image,
@@ -68,20 +74,37 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
             "is_safe": False,
             "dialog_state": "blocked",
             "requires_retrieval": False,
+            "clinical_subject": existing_subject,
+            "followup_pending": followup_pending_in,
             "agent_response": output_text,
             "process_image": False,
             "routing_trace": trace + ["dialogue_mgr -> blocked_refusal"],
         }
 
+    # =============================================================
     # STEP 2 — SCOPE / TAXONOMY CLASSIFICATION
-    scope = guardrails.classify_scope(
-        user_query,
-        has_image=has_image,
-    )
+    # =============================================================
+    # Image-only turns bypass text classification.
+    # Text queries go through BGE Scope Classifier -> Margin Gate -> Context Resolver
+    if has_image and not user_query:
+        scope = "CASUAL"
+        scope_source = "IMAGE_ONLY"
+        scope_debug = {}
+    else:
+        scope_result = classify_scope_with_gate(
+            scope_classifier,
+            user_query,
+            clinical_subject=existing_subject,
+        )
+        scope = scope_result["scope"]
+        scope_source = scope_result["scope_source"]
+        scope_debug = scope_result
 
     query_lower = user_query.lower().strip()
 
+    # =============================================================
     # STEP 3 — SUBJECT MEMORY TRACKING
+    # =============================================================
     clinical_subject = existing_subject
 
     for pattern in MEDICAL_SUBJECT_PATTERNS:
@@ -90,34 +113,34 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
             clinical_subject = match.group(1)
             break
 
-     # STEP 4 — RETRIEVAL INTENT
+    # =============================================================
+    # STEP 4 — RETRIEVAL INTENT
+    # =============================================================
     has_retrieval_intent = any(
         phrase in query_lower for phrase in CLINICAL_INFORMATION_INTENTS
     )
-    
-    # STEP 5 — FSM ROUTING
+
+    # =============================================================
+    # STEP 5 — FSM ROUTING & STATE DETERMINATION
+    # =============================================================
     current_state = "chat"
-    followup_pending = False
+    followup_pending_out = False
     is_affirmation_response = False
     agent_response = ""
 
-    # Explicit retrieval request
-    if has_retrieval_intent:
+    # 1. OUT_OF_SCOPE always wins and blocks immediately
+    if scope == "OUT_OF_SCOPE":
+        current_state = "blocked"
+        agent_response = (
+            "I am a specialized AI medical assistant. "
+            "I can assist with medical, health, wellness, "
+            "and nutrition-related questions."
+        )
+
+    # 2. Image follow-up affirmation menu response
+    elif followup_pending_in and query_lower in AFFIRMATION_EXPRESSIONS:
         current_state = "clinical"
-
-    # First-turn image
-    elif has_image and previous_state in {"chat", "idle"}:
-        current_state = "multimodal_triage"
-        followup_pending = True
-
-    # Image follow-up affirmation
-    elif (
-        followup_pending
-        and query_lower in AFFIRMATION_EXPRESSIONS
-    ):
-
-        current_state = "clinical"
-        followup_pending = False
+        followup_pending_out = False
         is_affirmation_response = True
 
         agent_response = (
@@ -128,55 +151,78 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
             "• **Warning signs that need urgent attention**"
         )
 
-    # Medical / Nutrition
+    # 3. First-turn image upload
+    elif has_image and previous_state in {"chat", "idle"}:
+        current_state = "multimodal_triage"
+        followup_pending_out = True
+
+    # 4. Medical / Nutrition Scope
     elif scope in {"MEDICAL", "NUTRITION"}:
         current_state = "clinical"
 
-    # Continue clinical conversation
-    elif (
-        previous_state == "clinical"
-        and existing_subject ):
+    # 5. Explicit retrieval intent
+    elif has_retrieval_intent:
         current_state = "clinical"
 
-    # Default
+    # 6. Continue existing clinical conversation
+    elif previous_state == "clinical" and existing_subject:
+        current_state = "clinical"
+
+    # 7. Default casual conversation
     else:
         current_state = "chat"
 
-    # STEP 6 — PROCESSING FLAGS
+    # =============================================================
+    # STEP 6 — PROCESSING & RETRIEVAL FLAGS
+    # =============================================================
     process_image = (
         has_image and current_state == "multimodal_triage"
     )
 
-    # Don't retrieve for generic affirmation response
-    if is_affirmation_response:
+    if current_state == "blocked":
         requires_retrieval = False
-
-    # Clinical knowledge retrieval
+        process_image = False
+    elif is_affirmation_response:
+        requires_retrieval = False
     elif current_state == "clinical":
         requires_retrieval = True
-
-    # Initial image triage does not automatically need RAG
     else:
         requires_retrieval = False
 
+    logger.info(
+        "🩺 Dialogue State: [%s] | Scope: %s (%s) | Retrieval: %s | Subject: %s",
+        current_state,
+        scope,
+        scope_source,
+        requires_retrieval,
+        clinical_subject,
+    )
+
     return {
-        "is_safe": True,
+        "is_safe": current_state != "blocked",
         "dialog_state": current_state,
         "requires_retrieval": requires_retrieval,
         "clinical_subject": clinical_subject,
-        "followup_pending": followup_pending,
+        "followup_pending": followup_pending_out,
         "agent_response": agent_response,
         "user_query": user_query,
         "image_path": image_path if process_image else None,
         "process_image": process_image,
         "routing_trace": trace + [
             f"dialogue_mgr: "
-            f"scope={scope} | "
+            f"scope={scope} (source={scope_source}"
+            + (
+                f", score={scope_debug.get('best_score')}, "
+                f"margin={scope_debug.get('margin')}"
+                if scope_debug else ""
+            )
+            + ") | "
             f"state={current_state} | "
             f"retrieval={requires_retrieval} | "
             f"subject={clinical_subject}"
-        ]
+        ],
     }
+    
 
 def run_risk_classification(state: AgentState) -> Dict[str, Any]:
     """Node 2: Triage risk classification."""
