@@ -111,7 +111,7 @@ TRUSTED_WEB_SOURCES = {
 
 # Regex subject extractor with dynamic term fallback for multimodal turns
 MEDICAL_SUBJECT_PATTERNS = [
-    # Dermatology
+    # --- Dermatology ---
     r"\b(hives|urticaria)\b",
     r"\b(eczema|dermatitis)\b",
     r"\b(rash|lesion|welts?)\b",
@@ -119,16 +119,94 @@ MEDICAL_SUBJECT_PATTERNS = [
     r"\b(ringworm|fungal infection|tinea)\b",
     r"\b(psoriasis|acne|rosacea)\b",
     r"\b(shingles|herpes|chickenpox)\b",
+    r"\b(hair loss|alopecia)\b",
+    r"\b(dandruff)\b",
+    r"\b(wart|warts)\b",
 
-    # Cardiovascular
+    # --- Cardiovascular ---
     r"\b(angina|heart disease|hypertension)\b",
+    r"\b(chest pain|chest tightness|palpitations)\b",
+    r"\b(arrhythmia|irregular heartbeat)\b",
+    r"\b(heart attack|myocardial infarction)\b",
+    r"\b(high cholesterol)\b",
 
-    # Neurological
+    # --- Neurological ---
     r"\b(migraine|headache|stroke)\b",
+    r"\b(numbness|dizziness|fainting)\b",
+    r"\b(seizure|epilepsy)\b",
+    r"\b(tremor)\b",
+    r"\b(vertigo)\b",
+    r"\b(memory loss|confusion)\b",
 
-    # Autoimmune / inflammatory
-    r"\b(lupus|arthritis)\b",
-
-    # Respiratory
+    # --- Respiratory ---
     r"\b(asthma|pneumonia|bronchitis)\b",
+    r"\b(cough|wheezing|shortness of breath)\b",
+    r"\b(common cold|flu|influenza)\b",
+    r"\b(sore throat)\b",
+
+    # --- Gastrointestinal ---
+    r"\b(stomach pain|abdominal pain|diarrhea|constipation)\b",
+    r"\b(nausea|vomiting|heartburn|acid reflux|gerd)\b",
+    r"\b(bloating)\b",
+    r"\b(stomach ulcer|peptic ulcer)\b",
+    r"\b(hemorrhoids)\b",
+
+    # --- Musculoskeletal ---
+    r"\b(arthritis)\b",
+    r"\b(joint pain|back pain|muscle strain)\b",
+    r"\b(sprain|fracture)\b",
+    r"\b(tendinitis)\b",
+
+    # --- ENT ---
+    r"\b(ear infection|otitis)\b",
+    r"\b(tinnitus|ringing in ears)\b",
+    r"\b(hearing loss)\b",
+    r"\b(sinusitis|sinus infection)\b",
+
+    # --- Endocrine / Metabolic ---
+    r"\b(diabetes)\b",
+    r"\b(hypothyroidism|hyperthyroidism|thyroid disorder)\b",
+    r"\b(obesity)\b",
+
+    # --- Mental Health (the condition itself, not the act of seeking care) ---
+    r"\b(anxiety|panic attack)\b",
+    r"\b(depression)\b",
+    r"\b(insomnia)\b",
+    r"\b(ptsd|post-traumatic stress)\b",
+    r"\b(bipolar disorder)\b",
+
+    # --- Infectious Disease ---
+    r"\b(covid|coronavirus)\b",
+    r"\b(strep throat)\b",
+
+    # --- Ophthalmologic ---
+    r"\b(conjunctivitis|pink eye)\b",
+    r"\b(blurred vision|double vision|vision loss)\b",
+    r"\b(cataract)\b",
+
+    # --- Urological / Renal ---
+    r"\b(kidney stones?)\b",
+    r"\b(urinary tract infection|uti|bladder infection)\b",
+
+    # --- Women's Health ---
+    r"\b(menstrual cramps)\b",
+    r"\b(yeast infection)\b",
+
+    # --- Allergy / Immune ---
+    r"\b(hay fever|seasonal allergies)\b",
+    r"\b(food allergy)\b",
+    r"\b(anaphylaxis)\b",
+
+    # --- Dental / Oral ---
+    r"\b(toothache)\b",
+    r"\b(gum disease|gingivitis)\b",
+    r"\b(cavity|cavities)\b",
+
+    # --- Hematological ---
+    r"\b(anemia)\b",
+    r"\b(blood clot)\b",
+
+    # --- General (symptom presentations broad enough to still be a subject) ---
+    r"\b(fever|infection|allergic reaction|inflammation)\b",
+    r"\b(fatigue|weight loss|weight gain)\b",
 ]
