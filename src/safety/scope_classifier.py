@@ -32,29 +32,10 @@ from src.models.embeddings import initialize_embeddings, normalize_vectors
 
 logger = logging.getLogger("mediqwen_scope_classifier")
 
-
-# ---------------------------------------------------------------------------
-# Thresholds validated against the current benchmark.
-#
-# CONFIDENCE_THRESHOLD is retained as a minimum score signal, but the
-# primary uncertainty signal is the top-1 vs top-2 similarity margin.
-#
-# Current benchmark candidate:
-#   confidence threshold = 0.50
-#   margin threshold     = 0.05
-# ---------------------------------------------------------------------------
-
 CONFIDENCE_THRESHOLD = 0.50
 MARGIN_THRESHOLD = 0.05
 
-
-# ---------------------------------------------------------------------------
 # Scope prototypes
-#
-# Keep this identical to the benchmark notebook.
-# The benchmark queries themselves must never be included here.
-# ---------------------------------------------------------------------------
-
 SCOPE_PROTOTYPES = {
     "MEDICAL": [
         "What are the treatment options for this condition?",
@@ -141,6 +122,15 @@ SCOPE_PROTOTYPES = {
 # Word boundaries are important:
 #   "eat" must not match "treatment".
 # ---------------------------------------------------------------------------
+
+# Regex pattern for anaphoric pronouns and conversational context indicators
+ANAPHORIC_PATTERNS = re.compile(
+    r"\b("
+    r"this issue|this problem|the rash|the lesion|"
+    r"it|this|that|them|these|those"
+    r")\b",
+    re.IGNORECASE,
+)
 
 _TECHNICAL_MARKERS = (
     "python",
@@ -341,38 +331,64 @@ def classify_scope_with_gate(
 ) -> Dict[str, Any]:
     """
     Main scope-classification entry point for the Dialogue Manager.
-
-    Flow:
-
-        Query
-          ↓
-        BGE
-          ↓
-        Margin Gate
-          ├── CONFIDENT → BGE scope
-          └── UNCERTAIN → existing dialogue context
-
-    A confident BGE decision is never overridden by dialogue context.
-
-    This prevents a medical conversation from turning an explicit
-    programming request such as "write Python code to analyze this"
-    into MEDICAL.
     """
-
     bge_result = classifier.classify_scope(query)
 
-    if bge_result["decision"] == "CONFIDENT":
-        scope = bge_result["best_scope"]
-        scope_source = "BGE"
-    else:
-        scope = resolve_scope_with_context(
-            query=query,
-            clinical_subject=clinical_subject,
-        )
-        scope_source = "DIALOG_CONTEXT"
+    best_scope = bge_result["best_scope"]
+    best_score = bge_result["best_score"]
+    margin = bge_result["margin"]
+
+    q_lower = query.lower().strip()
+
+    # 1. Technical / Out-of-Scope override (Hard safety check)
+    if _contains_marker(q_lower, _TECHNICAL_MARKERS):
+        return {
+            **bge_result,
+            "scope": "OUT_OF_SCOPE",
+            "scope_source": "TECHNICAL_OVERRIDE",
+            "decision": "HIGH_CONFIDENCE",
+        }
+
+    # 2. Anaphora check + Active dialogue context
+    has_anaphora = bool(ANAPHORIC_PATTERNS.search(q_lower))
+
+    if has_anaphora and clinical_subject:
+        return {
+            **bge_result,
+            "scope": "MEDICAL",
+            "scope_source": "ANAPHORA_CONTEXT_OVERRIDE",
+            "decision": "CONTEXT_RESOLVED",
+        }
+
+    # 3. Standard BGE confidence + margin threshold gate
+    is_confident = (
+        best_score >= CONFIDENCE_THRESHOLD
+        and margin >= MARGIN_THRESHOLD
+    )
+
+    if is_confident:
+        return {
+            **bge_result,
+            "scope": best_scope,
+            "scope_source": "BGE",
+            "decision": "HIGH_CONFIDENCE",
+        }
+
+    # 4. Low-confidence / Low-margin fallback via resolve_scope_with_context
+    resolved_scope = resolve_scope_with_context(
+        query=q_lower,
+        clinical_subject=clinical_subject,
+    )
+
+    scope_source = (
+        "DIALOG_CONTEXT"
+        if clinical_subject and resolved_scope == "MEDICAL"
+        else "DETERMINISTIC_FALLBACK"
+    )
 
     return {
         **bge_result,
-        "scope": scope,
+        "scope": resolved_scope,
         "scope_source": scope_source,
+        "decision": "FALLBACK_ROUTED",
     }
