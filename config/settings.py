@@ -16,6 +16,32 @@ EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
 # Safety Controls
 ENABLE_SAFETY_CHECKS = True
 
+# Regex Search Tokens & Filler Normalizers
+TOKEN_REGEX = re.compile(r"\b\w+\b")
+
+STRUCTURAL_PHRASES = [
+    re.compile(r"\bwhat (are|is) (the|its)?\b", re.IGNORECASE),
+    re.compile(r"\bhow (can|do) i (treat|manage|prevent)\b", re.IGNORECASE),
+    re.compile(r"\btell me about\b", re.IGNORECASE),
+]
+
+QUERY_FILLERS = [
+    re.compile(r"\bplease\b", re.IGNORECASE),
+    re.compile(r"\bcan you\b", re.IGNORECASE),
+    re.compile(r"\bcould you\b", re.IGNORECASE),
+]
+
+# Intent Keywords for Web Search Scoping
+ALLERGY_KEYWORDS = {
+    "hives", "urticaria", "rash", "allergy", "allergic", "swelling",
+    "itching", "eczema", "dermatitis", "anaphylaxis", "histamine"
+}
+
+NUTRITION_KEYWORDS = {
+    "diet", "food", "nutrition", "eat", "eating", "vitamin", "meal",
+    "calories", "protein", "carbs", "magnesium", "supplement", "nutrients"
+}
+
 # FSM & Intent Keywords (Used in run_dialogue_manager)
 AFFIRMATION_EXPRESSIONS = {
     "yes",
@@ -141,7 +167,7 @@ MEDICAL_SUBJECT_PATTERNS = [
     # --- Respiratory ---
     r"\b(asthma|pneumonia|bronchitis)\b",
     r"\b(cough|wheezing|shortness of breath)\b",
-    r"\b(common cold|flu|influenza)\b",
+    r"\b(common colds|flu|influenza)\b",
     r"\b(sore throat)\b",
 
     # --- Gastrointestinal ---

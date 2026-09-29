@@ -45,14 +45,18 @@ image_processor = MedicalImageProcessor()
 def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     """
     Node 1: Dialogue Manager FSM.
-    Enforces safety boundaries, semantic scope classification, and context resolution.
+    Enforces safety boundaries, multimodal context boundaries, semantic scope 
+    classification, and context resolution.
     Determines authoritative dialogue state, subject memory, and retrieval flags.
     """
     logger.info("=== [Node: Dialogue Manager FSM] ===")
 
     user_query = state.get("user_query", "").strip()
+    
+    # 1. Robust image presence detection across both raw path and pre-processed payload
     image_path = state.get("image_path")
-    has_image = bool(image_path)
+    processed_image_payload = state.get("processed_image_payload")
+    has_image = bool(image_path or processed_image_payload)
 
     previous_state = str(state.get("dialog_state", "chat")).lower().strip()
     existing_subject = state.get("clinical_subject")
@@ -60,6 +64,7 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     # Read incoming follow-up pending flag from previous graph state
     followup_pending_in = state.get("followup_pending", False)
     trace = state.get("routing_trace", []) or []
+    query_lower = user_query.lower().strip()
 
     # =============================================================
     # STEP 1 — SAFETY BOUNDARY
@@ -70,9 +75,13 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     )
 
     if not is_safe:
+        logger.info("🚫 Safety Guardrail triggered. Blocking request.")
         return {
             "is_safe": False,
             "dialog_state": "blocked",
+            "scope": "OUT_OF_SCOPE",
+            "scope_source": "SAFETY_GUARDRAIL",
+            "decision": "BLOCKED",
             "requires_retrieval": False,
             "clinical_subject": existing_subject,
             "followup_pending": followup_pending_in,
@@ -82,30 +91,68 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
         }
 
     # =============================================================
+    # STEP 1.5 — MULTIMODAL EVENT & CONTEXT BOUNDARY EVALUATION
+    # =============================================================
+    if has_image:
+        # Conservative sameness anchoring (requires explicit noun/phrase linkage)
+        continuation_patterns = [
+            r"\b(same|previous)\s+(condition|rash|symptom|lesion|spot)\b",
+            r"\b(image|photo|picture)\s+of\s+my\s+(" + (re.escape(existing_subject) if existing_subject else "condition") + r")\b",
+            r"\bdoes\s+this\s+look\s+(similar|like\s+the\s+same)\b",
+            r"\b(another|additional)\s+(image|photo|picture)\s+of\s+the\s+same\b",
+        ]
+        
+        is_explicit_continuation = bool(
+            existing_subject and any(re.search(p, query_lower) for p in continuation_patterns)
+        )
+
+        if is_explicit_continuation:
+            logger.info("📸 Image attached with explicit continuation -> Preserving subject: '%s'", existing_subject)
+            active_subject = existing_subject
+        else:
+            logger.info("📸 New image detected without explicit continuation -> Boundary reset (clearing stale subject: '%s')", existing_subject)
+            active_subject = None  # Reset stale subject for fresh visual case
+
+        logger.info(
+            "🩺 Dialogue State: [multimodal_triage] | Scope: MULTIMODAL (MULTIMODAL_IMAGE_OVERRIDE) | Retrieval: False | Subject: %s",
+            active_subject,
+        )
+
+        return {
+            "is_safe": True,
+            "dialog_state": "multimodal_triage",
+            "scope": "MULTIMODAL",
+            "scope_source": "MULTIMODAL_IMAGE_OVERRIDE",
+            "decision": "HIGH_CONFIDENCE",
+            "requires_retrieval": False,
+            "clinical_subject": active_subject,
+            "followup_pending": True,  # Keep multimodal conversation open for clinical follow-up
+            "agent_response": "",
+            "user_query": user_query,
+            "image_path": image_path,
+            "processed_image_payload": processed_image_payload,
+            "process_image": True,
+            "routing_trace": trace + [f"dialogue_mgr: scope=MULTIMODAL (source=MULTIMODAL_IMAGE_OVERRIDE) | state=multimodal_triage | retrieval=False | subject={active_subject}"],
+        }
+
+    # =============================================================
     # STEP 2 — SCOPE / TAXONOMY CLASSIFICATION
     # =============================================================
-    # Image-only turns bypass text classification.
     # Text queries go through BGE Scope Classifier -> Margin Gate -> Context Resolver
-    if has_image and not user_query:
-        scope = "CASUAL"
-        scope_source = "IMAGE_ONLY"
-        scope_debug = {}
-    else:
-        scope_result = classify_scope_with_gate(
-            scope_classifier,
-            user_query,
-            clinical_subject=existing_subject,
-        )
-        scope = scope_result["scope"]
-        scope_source = scope_result["scope_source"]
-        scope_debug = scope_result
-
-    query_lower = user_query.lower().strip()
+    scope_result = classify_scope_with_gate(
+        scope_classifier,
+        user_query,
+        clinical_subject=existing_subject,
+    )
+    scope = scope_result["scope"]
+    scope_source = scope_result["scope_source"]
+    scope_debug = scope_result
 
     # =============================================================
     # STEP 3 — SUBJECT MEMORY TRACKING
     # =============================================================
     clinical_subject = existing_subject
+    logger.info("📥 Incoming clinical_subject from state: '%s'", existing_subject)
 
     for pattern in MEDICAL_SUBJECT_PATTERNS:
         match = re.search(pattern, query_lower)
@@ -151,37 +198,27 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
             "• **Warning signs that need urgent attention**"
         )
 
-    # 3. First-turn image upload
-    elif has_image and previous_state in {"chat", "idle"}:
-        current_state = "multimodal_triage"
-        followup_pending_out = True
-
-    # 4. Medical / Nutrition Scope
+    # 3. Medical / Nutrition Scope
     elif scope in {"MEDICAL", "NUTRITION"}:
         current_state = "clinical"
 
-    # 5. Explicit retrieval intent
+    # 4. Explicit retrieval intent
     elif has_retrieval_intent:
         current_state = "clinical"
 
-    # 6. Continue existing clinical conversation
+    # 5. Continue existing clinical conversation
     elif previous_state == "clinical" and existing_subject:
         current_state = "clinical"
 
-    # 7. Default casual conversation
+    # 6. Default casual conversation
     else:
         current_state = "chat"
 
     # =============================================================
     # STEP 6 — PROCESSING & RETRIEVAL FLAGS
     # =============================================================
-    process_image = (
-        has_image and current_state == "multimodal_triage"
-    )
-
     if current_state == "blocked":
         requires_retrieval = False
-        process_image = False
     elif is_affirmation_response:
         requires_retrieval = False
     elif current_state == "clinical":
@@ -201,13 +238,16 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     return {
         "is_safe": current_state != "blocked",
         "dialog_state": current_state,
+        "scope": scope,
+        "scope_source": scope_source,
+        "decision": scope_debug.get("decision", "HIGH_CONFIDENCE"),
         "requires_retrieval": requires_retrieval,
         "clinical_subject": clinical_subject,
         "followup_pending": followup_pending_out,
         "agent_response": agent_response,
         "user_query": user_query,
-        "image_path": image_path if process_image else None,
-        "process_image": process_image,
+        "image_path": None,
+        "process_image": False,
         "routing_trace": trace + [
             f"dialogue_mgr: "
             f"scope={scope} (source={scope_source}"
@@ -339,13 +379,20 @@ def run_web_search_tool(state: AgentState) -> Dict[str, Any]:
     # 2. Context-Aware Query Construction
     clean_query = normalize_query(user_query)
     
-    if clinical_subject and clean_query:
-        search_query = f"{clinical_subject} {clean_query}".strip()
+    if clinical_subject:
+        # Strip conversational intent fillers to build focused keyword search queries
+        query_lower = user_query.lower()
+        if any(k in query_lower for k in ["treat", "treatment", "cure", "management", "relief"]):
+            search_query = f"{clinical_subject} treatment"
+        elif any(k in query_lower for k in ["symptom", "sign", "cause", "trigger"]):
+            search_query = f"{clinical_subject} symptoms causes"
+        else:
+            search_query = f"{clinical_subject} {clean_query}".strip()
     else:
         search_query = clean_query
 
-    logger.info(f"🔍 Context-resolved web search query: '{search_query}'")
-
+    logger.info("🔍 Context-resolved web search query: '%s'", search_query)
+    
     # 3. Domain Intent Detection & Search Target Scoping
     search_domain = detect_search_domain(search_query)
 
@@ -388,28 +435,57 @@ def run_web_search_tool(state: AgentState) -> Dict[str, Any]:
 
     # 5. Scrape, Parse & Cache Execution Loop
     for url in target_urls:
+        logger.info("🌐 Processing trusted URL: %s", url)
         try:
             # Check vector collection cache to avoid dupe scrapes
             try:
                 existing_cache = vector_store.vectorstore.get(where={"url": url})
                 if existing_cache and existing_cache.get("ids"):
-                    logger.info(f"💾 Cache hit. Loading historical vector layers for: {url}")
-                    retrieved_context.extend(existing_cache.get("documents", []))
-                    parsed_domain = urlparse(url).netloc.replace("www.", "")
-                    matched = next((d for d in TRUSTED_WEB_SOURCES if d in parsed_domain), "Source")
-                    s_name = TRUSTED_WEB_SOURCES.get(matched, {"name": "Cached Reference"})["name"]
-                    if s_name not in context_sources:
-                        context_sources.append(s_name)
-                    continue
+                    cached_docs = existing_cache.get("documents", [])
+                    # Validate cached document quality before reusing
+                    valid_cached = [
+                        doc for doc in cached_docs 
+                        if isinstance(doc, str) and len(doc.strip()) > 120
+                    ]
+                    if valid_cached:
+                        logger.info("💾 Cache hit. Loading %d validated historical chunks for: %s", len(valid_cached), url)
+                        retrieved_context.extend(valid_cached)
+                        parsed_domain = urlparse(url).netloc.replace("www.", "")
+                        matched = next((d for d in TRUSTED_WEB_SOURCES if d in parsed_domain), "Source")
+                        s_name = TRUSTED_WEB_SOURCES.get(matched, {"name": "Cached Reference"})["name"]
+                        if s_name not in context_sources:
+                            context_sources.append(s_name)
+                        continue
+                    
             except Exception as cache_err:
-                logger.warning(f"Cache lookup pass bypassed safely: {cache_err}")
+                logger.warning("Cache lookup pass bypassed safely: %s", cache_err)
 
             # Execute web scraping
-            web_chunks = web_scraper.scrape_to_structured_markdown(url, query_condition=search_query) or []
+            raw_chunks = web_scraper.scrape_to_structured_markdown(
+                url, 
+                query_condition=clinical_subject or search_query
+            ) or []
             
+            raw_count = len(raw_chunks)
+            logger.info("📄 Scraper returned %d raw chunks from %s", raw_count, url)
+
+            if raw_count > 0:
+                chunk_lengths = [
+                    len(c.get("text", "") if isinstance(c, dict) else str(c))
+                    for c in raw_chunks
+                ]
+                logger.info("📏 Raw chunk character lengths: %s", chunk_lengths)
+
             # Quality Filter: Purge boilerplate text chunks under 120 characters
-            web_chunks = [c for c in web_chunks if len(c.get("text", "") if isinstance(c, dict) else str(c)) > 120]
+            web_chunks = [
+                c for c in raw_chunks 
+                if len(c.get("text", "") if isinstance(c, dict) else str(c)) > 120
+            ]
+            
+            logger.info("🧹 Quality filter retained %d/%d chunks from %s", len(web_chunks), raw_count, url)
+
             if not web_chunks:
+                logger.warning("⚠️ No usable chunks retained after quality filtering for %s", url)
                 continue
 
             parsed = urlparse(url)
@@ -466,7 +542,7 @@ def run_web_search_tool(state: AgentState) -> Dict[str, Any]:
                     context_sources.append(ref_str)
 
         except Exception as page_ex:
-            logger.exception(f"❌ Isolated failure processing web page: {url} | Reason: {page_ex}")
+            logger.exception("❌ Isolated failure processing web page %s | Reason: %s", url, page_ex)
             continue
 
     # 6. Cap Maximum Retrieved Web Chunks
@@ -562,9 +638,8 @@ def run_qwen_generation(state: AgentState) -> Dict[str, Any]:
         state.get("risk_level", "LOW")
     ).upper().strip()
 
-    risk_metadata = dict(
-        state.get("risk_metadata", {}) or {}
-    )
+    # Safely create a shallow copy to prevent dictionary mutation across graph nodes
+    risk_metadata = dict(state.get("risk_metadata", {}) or {}).copy()
 
     image_payload = state.get("processed_image_payload")
 

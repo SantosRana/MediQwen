@@ -651,16 +651,7 @@ class Guardrails:
                 "provide programming or software development assistance."
             )
 
-        # 6. Scope Validation
-        scope = self.classify_scope(text_clean, has_image=has_image)
-        if scope == "OUT_OF_SCOPE":
-            logger.info("🛑 Out-of-scope query blocked.")
-            return False, (
-                "I am a specialized AI medical assistant. "
-                "I can assist with medical, health, wellness, "
-                "and nutrition-related questions."
-            )
-
+    
         return True, text_clean
 
     # =======================================================================

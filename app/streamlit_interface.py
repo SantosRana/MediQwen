@@ -150,6 +150,16 @@ if "recent_queries" not in st.session_state:
 
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
+    
+# --- ADDED: Stateful Multi-Turn Tracking Variables ---
+if "clinical_subject" not in st.session_state:
+    st.session_state.clinical_subject = None
+
+if "dialog_state" not in st.session_state:
+    st.session_state.dialog_state = "chat"
+
+if "followup_pending" not in st.session_state:
+    st.session_state.followup_pending = False
 
 backend_online = check_backend_status()
 
@@ -312,9 +322,12 @@ if user_query:
         with st.spinner("MediQwen is analyzing clinical parameters and vision embeddings..."):
             try:
                 form_data = {
-                    "user_query": user_query,
-                    "is_online": str(online_toggle)
-                }
+                "user_query": user_query,
+                "is_online": str(online_toggle),
+                "clinical_subject": st.session_state.clinical_subject or "",
+                "dialog_state": st.session_state.dialog_state,
+                "followup_pending": str(st.session_state.followup_pending),
+            }
 
                 files = None
                 if uploaded_image:
@@ -332,6 +345,11 @@ if user_query:
                     final_answer = data.get("agent_response", "")
                     sources_found = data.get("context_sources", [])
                     risk_level = data.get("risk_level", "low")
+                    
+                    # Persist updated state returned by backend ---
+                    st.session_state.clinical_subject = data.get("clinical_subject")
+                    st.session_state.dialog_state = data.get("dialog_state", "chat")
+                    st.session_state.followup_pending = data.get("followup_pending", False)
 
                     render_risk_and_sources(sources_found, risk_level, show_emergency_banner=True)
                     response_placeholder.markdown(final_answer)
@@ -361,4 +379,8 @@ with col_clear:
         st.session_state.messages = []
         st.session_state.recent_queries = []
         st.session_state.uploader_key += 1
+        # Clear conversational memory ---
+        st.session_state.clinical_subject = None
+        st.session_state.dialog_state = "chat"
+        st.session_state.followup_pending = False
         st.rerun()

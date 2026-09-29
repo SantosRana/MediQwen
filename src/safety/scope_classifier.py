@@ -127,6 +127,7 @@ SCOPE_PROTOTYPES = {
 ANAPHORIC_PATTERNS = re.compile(
     r"\b("
     r"this issue|this problem|the rash|the lesion|"
+    r"its|"
     r"it|this|that|them|these|those"
     r")\b",
     re.IGNORECASE,
