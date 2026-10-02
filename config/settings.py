@@ -137,102 +137,155 @@ TRUSTED_WEB_SOURCES = {
 
 # Regex subject extractor with dynamic term fallback for multimodal turns
 MEDICAL_SUBJECT_PATTERNS = [
+    # --- Infectious / Zoonotic / Viral (Fixes Rabies & Common Pathogens) ---
+    r"\b(rabies|hydrophobia)\b",
+    r"\b(tetanus|lockjaw)\b",
+    r"\b(sepsis|septicemia)\b",
+    r"\b(tuberculosis|tb)\b",
+    r"\b(malaria|dengue|zika|cholera|typhoid)\b",
+    r"\b(measles|mumps|rubella|chickenpox|shingles|smallpox|mpox)\b",
+    r"\b(covid(?:-?19)?|coronavirus|sars)\b",
+    r"\b(common colds?|flus?|influenza)\b",
+    r"\b(strep(?:tococcal)?\s*(?:throat)?)\b",
+    r"\b(mono|mononucleosis)\b",
+
     # --- Dermatology ---
     r"\b(hives|urticaria)\b",
     r"\b(eczema|dermatitis)\b",
-    r"\b(rash|lesion|welts?)\b",
-    r"\b(blister|burn)\b",
+    r"\b(rash(?:es)?|lesion(?:s)?|welts?)\b",
+    r"\b(blister(?:s)?|burn(?:s)?)\b",
     r"\b(ringworm|fungal infection|tinea)\b",
     r"\b(psoriasis|acne|rosacea)\b",
-    r"\b(shingles|herpes|chickenpox)\b",
     r"\b(hair loss|alopecia)\b",
     r"\b(dandruff)\b",
-    r"\b(wart|warts)\b",
+    r"\b(warts?)\b",
 
     # --- Cardiovascular ---
-    r"\b(angina|heart disease|hypertension)\b",
-    r"\b(chest pain|chest tightness|palpitations)\b",
+    r"\b(angina|heart disease|hypertension|high blood pressure)\b",
+    r"\b(chest pain|chest tightness|palpitations?)\b",
     r"\b(arrhythmia|irregular heartbeat)\b",
     r"\b(heart attack|myocardial infarction)\b",
     r"\b(high cholesterol)\b",
 
     # --- Neurological ---
-    r"\b(migraine|headache|stroke)\b",
-    r"\b(numbness|dizziness|fainting)\b",
-    r"\b(seizure|epilepsy)\b",
-    r"\b(tremor)\b",
+    r"\b(migraines?|headaches?|strokes?)\b",
+    r"\b(numbness|dizziness|fainting|syncope)\b",
+    r"\b(seizures?|epilepsy)\b",
+    r"\b(tremors?)\b",
     r"\b(vertigo)\b",
-    r"\b(memory loss|confusion)\b",
+    r"\b(memory loss|dementia|alzheimer'?s|confusion)\b",
 
     # --- Respiratory ---
     r"\b(asthma|pneumonia|bronchitis)\b",
-    r"\b(cough|wheezing|shortness of breath)\b",
-    r"\b(common colds|flu|influenza)\b",
+    r"\b(coughs?|coughing|wheezing|shortness of breath|dyspnea)\b",
     r"\b(sore throat)\b",
+    r"\b(copd|emphysema)\b",
 
     # --- Gastrointestinal ---
     r"\b(stomach pain|abdominal pain|diarrhea|constipation)\b",
     r"\b(nausea|vomiting|heartburn|acid reflux|gerd)\b",
     r"\b(bloating)\b",
-    r"\b(stomach ulcer|peptic ulcer)\b",
-    r"\b(hemorrhoids)\b",
+    r"\b(stomach ulcers?|peptic ulcers?)\b",
+    r"\b(hemorrhoids?)\b",
+    r"\b(ibs|irritable bowel syndrome|crohn'?s|ulcerative colitis)\b",
 
     # --- Musculoskeletal ---
-    r"\b(arthritis)\b",
-    r"\b(joint pain|back pain|muscle strain)\b",
-    r"\b(sprain|fracture)\b",
-    r"\b(tendinitis)\b",
+    r"\b(arthritis|gout)\b",
+    r"\b(joint pain|back pain|muscle strain|neck pain)\b",
+    r"\b(sprains?|fractures?|broken bone(?:s)?)\b",
+    r"\b(tendinitis|bursitis)\b",
+    r"\b(osteoporosis)\b",
 
     # --- ENT ---
-    r"\b(ear infection|otitis)\b",
-    r"\b(tinnitus|ringing in ears)\b",
+    r"\b(ear infections?|otitis(?:\s+media)?)\b",
+    r"\b(tinnitus|ringing in ears?)\b",
     r"\b(hearing loss)\b",
-    r"\b(sinusitis|sinus infection)\b",
+    r"\b(sinusitis|sinus infections?)\b",
 
-    # --- Endocrine / Metabolic ---
-    r"\b(diabetes)\b",
-    r"\b(hypothyroidism|hyperthyroidism|thyroid disorder)\b",
+    # --- Endocrine / Metabolic / Autoimmune ---
+    r"\b(diabetes|diabetic)\b",
+    r"\b(hypothyroidism|hyperthyroidism|thyroid disorders?)\b",
     r"\b(obesity)\b",
+    r"\b(lupus|rheumatoid arthritis)\b",
 
-    # --- Mental Health (the condition itself, not the act of seeking care) ---
-    r"\b(anxiety|panic attack)\b",
-    r"\b(depression)\b",
-    r"\b(insomnia)\b",
+    # --- Mental Health ---
+    r"\b(anxiety|panic attacks?)\b",
+    r"\b(depression|depressive)\b",
+    r"\b(insomnia|sleep apnea)\b",
     r"\b(ptsd|post-traumatic stress)\b",
     r"\b(bipolar disorder)\b",
 
-    # --- Infectious Disease ---
-    r"\b(covid|coronavirus)\b",
-    r"\b(strep throat)\b",
-
     # --- Ophthalmologic ---
-    r"\b(conjunctivitis|pink eye)\b",
+    r"\b(conjunctivitis|pink\s*eye)\b",
     r"\b(blurred vision|double vision|vision loss)\b",
-    r"\b(cataract)\b",
+    r"\b(cataracts?|glaucoma)\b",
 
     # --- Urological / Renal ---
-    r"\b(kidney stones?)\b",
-    r"\b(urinary tract infection|uti|bladder infection)\b",
+    r"\b(kidney stones?|renal calculi)\b",
+    r"\b(urinary tract infections?|uti|bladder infections?)\b",
 
     # --- Women's Health ---
-    r"\b(menstrual cramps)\b",
-    r"\b(yeast infection)\b",
+    r"\b(menstrual cramps|dysmenorrhea)\b",
+    r"\b(yeast infections?|vaginosis)\b",
 
     # --- Allergy / Immune ---
-    r"\b(hay fever|seasonal allergies)\b",
-    r"\b(food allergy)\b",
-    r"\b(anaphylaxis)\b",
+    r"\b(hay fever|seasonal allergies?)\b",
+    r"\b(food allerg(?:y|ies))\b",
+    r"\b(anaphylaxis|anaphylactic shock)\b",
 
     # --- Dental / Oral ---
-    r"\b(toothache)\b",
-    r"\b(gum disease|gingivitis)\b",
-    r"\b(cavity|cavities)\b",
+    r"\b(toothaches?|dental pain)\b",
+    r"\b(gum disease|gingivitis|periodontitis)\b",
+    r"\b(cavit(?:y|ies))\b",
 
-    # --- Hematological ---
+    # --- Hematological & Oncology ---
     r"\b(anemia)\b",
-    r"\b(blood clot)\b",
+    r"\b(blood clots?|deep vein thrombosis|dvt)\b",
+    r"\b(cancers?|tumors?|leukemia|lymphoma)\b",
 
-    # --- General (symptom presentations broad enough to still be a subject) ---
-    r"\b(fever|infection|allergic reaction|inflammation)\b",
+    # --- Broad Presentation Fallbacks ---
+    r"\b(fevers?|infections?|allergic reactions?|inflammation)\b",
     r"\b(fatigue|weight loss|weight gain)\b",
+]
+
+# Subject-Bearing Intents (Filtered subset explicitly tied to noun phrases)
+SUBJECT_EXTRACTION_INTENTS = (
+    "treatment",
+    "treatment options",
+    "recommended treatment",
+    "management options",
+    "medication options",
+    "how to cure",
+    "symptoms",
+    "warning signs",
+    "diagnosis",
+    "complications",
+    "side effects",
+    "risks",
+    "guidelines",
+    "clinical guidelines",
+    "recommendations",
+    "clinical recommendations",
+    "management guidelines",
+)
+
+# Compile dynamic regex patterns using ONLY subject-bearing intents
+_subject_intent_block = "|".join(re.escape(intent) for intent in SUBJECT_EXTRACTION_INTENTS)
+
+DYNAMIC_SUBJECT_PATTERNS = [
+    re.compile(
+        rf"\b(?:{_subject_intent_block})\s+"
+        r"(?:of|for|about|on)\s+"
+        r"([^?.!,]+?)(?:\s+\b(?:and|but|or)\b|[?.!,]|$)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bhow\s+is\s+([^?.!,]+?)\s+"
+        r"(?:treated|managed|diagnosed|prevented)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bwhat\s+is\s+([^?.!,]+)",
+        re.IGNORECASE,
+    ),
 ]

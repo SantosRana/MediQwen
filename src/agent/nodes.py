@@ -148,18 +148,47 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     scope_source = scope_result["scope_source"]
     scope_debug = scope_result
 
-    # =============================================================
-    # STEP 3 — SUBJECT MEMORY TRACKING
+    # STEP 3 — CLINICAL SUBJECT MEMORY / EXTRACTION
     # =============================================================
     clinical_subject = existing_subject
     logger.info("📥 Incoming clinical_subject from state: '%s'", existing_subject)
 
-    for pattern in MEDICAL_SUBJECT_PATTERNS:
-        match = re.search(pattern, query_lower)
-        if match:
-            clinical_subject = match.group(1)
-            break
+    # Strictly extract new clinical subjects ONLY for verified medical/nutrition queries
+    if scope in {"MEDICAL", "NUTRITION"}:
 
+        # 1. Configured medical vocabulary (exact/high-confidence patterns)
+        for pattern in MEDICAL_SUBJECT_PATTERNS:
+            match = re.search(pattern, query_lower)
+            if match:
+                clinical_subject = match.group(1).strip()
+                logger.info(
+                    "🎯 Clinical subject matched from configured pattern: '%s'",
+                    clinical_subject
+                )
+                break
+
+        # 2. Dynamic intent-based fallback for unlisted medical subjects
+        if not clinical_subject:
+
+            for pattern in DYNAMIC_SUBJECT_PATTERNS:
+                match = re.search(pattern, query_lower)
+                if match:
+                    extracted_raw = match.group(1).strip()
+                    # Strip leading articles or possessive pronouns
+                    clean_subject = re.sub(
+                        r"^\s*(?:a|an|the|this|that|my|some)\s+",
+                        "",
+                        extracted_raw,
+                        flags=re.IGNORECASE,
+                    ).strip()
+
+                    if clean_subject:
+                        clinical_subject = clean_subject
+                        logger.info(
+                            "🎯 Clinical subject extracted via dynamic fallback: '%s'",
+                            clinical_subject
+                        )
+                        break
     # =============================================================
     # STEP 4 — RETRIEVAL INTENT
     # =============================================================
@@ -353,9 +382,9 @@ def run_web_search_tool(state: AgentState) -> Dict[str, Any]:
     """
     Node 5: Trusted Web Search Fallback Engine.
 
-    Web retrieval is strictly intent-driven. The Dialogue Manager determines whether
-    retrieval is required; this node executes trusted web retrieval only when 
-    `requires_retrieval` is True (e.g., when local vector retrieval fails or yields insufficient context).
+    Web retrieval is strictly intent-driven. Executes trusted web retrieval with
+    clinical intent normalization, multi-source round-robin interleaving, and 
+    validated vector store caching when local retrieval yields zero candidates.
     """
     logger.info("=== [Node: Live Web Search Fallback] ===")
     start_time = time.time()
@@ -376,16 +405,30 @@ def run_web_search_tool(state: AgentState) -> Dict[str, Any]:
             "show_risk_badge": False
         }
 
-    # 2. Context-Aware Query Construction
+    # =============================================================
+    # STEP 2 — CONTEXT-AWARE QUERY CONSTRUCTION & INTENT MAPPING
+    # =============================================================
     clean_query = normalize_query(user_query)
-    
+
     if clinical_subject:
         # Strip conversational intent fillers to build focused keyword search queries
         query_lower = user_query.lower()
-        if any(k in query_lower for k in ["treat", "treatment", "cure", "management", "relief"]):
+
+        if any(k in query_lower for k in [
+            "treat", "treatment", "cure", "management", "relief"
+        ]):
             search_query = f"{clinical_subject} treatment"
-        elif any(k in query_lower for k in ["symptom", "sign", "cause", "trigger"]):
+
+        elif any(k in query_lower for k in [
+            "symptom", "symptoms", "sign", "signs", "cause", "causes", "trigger", "triggers"
+        ]):
             search_query = f"{clinical_subject} symptoms causes"
+
+        elif any(k in query_lower for k in [
+            "prevent", "prevention", "preventive"
+        ]):
+            search_query = f"{clinical_subject} prevention"
+
         else:
             search_query = f"{clinical_subject} {clean_query}".strip()
     else:
@@ -430,74 +473,107 @@ def run_web_search_tool(state: AgentState) -> Dict[str, Any]:
             "show_risk_badge": False
         }
 
-    retrieved_context = []
+    # =============================================================
+    # STEP 5 — SCRAPE, PARSE & CACHE
+    # =============================================================
+    # Accumulate chunks by source name to preserve source diversity
+    source_chunks_map: Dict[str, List[str]] = {}
     context_sources = []
 
-    # 5. Scrape, Parse & Cache Execution Loop
     for url in target_urls:
         logger.info("🌐 Processing trusted URL: %s", url)
+
         try:
-            # Check vector collection cache to avoid dupe scrapes
+            parsed = urlparse(url)
+            parsed_domain = parsed.netloc.replace("www.", "")
+
+            matched_domain = next(
+                (d for d in TRUSTED_WEB_SOURCES if d in parsed_domain),
+                "Trusted Source"
+            )
+
+            # Extract source information early before try/cache blocks
+            source_info = TRUSTED_WEB_SOURCES.get(
+                matched_domain,
+                {"name": "Trusted Source", "score": 7}
+            )
+
+            source_name = source_info["name"]
+
+            # -----------------------------------------------------
+            # Cache lookup pass
+            # -----------------------------------------------------
             try:
                 existing_cache = vector_store.vectorstore.get(where={"url": url})
+
                 if existing_cache and existing_cache.get("ids"):
                     cached_docs = existing_cache.get("documents", [])
-                    # Validate cached document quality before reusing
+
+                    # Quality filter: validate cached chunks before reusing
                     valid_cached = [
-                        doc for doc in cached_docs 
+                        doc
+                        for doc in cached_docs
                         if isinstance(doc, str) and len(doc.strip()) > 120
                     ]
+
                     if valid_cached:
-                        logger.info("💾 Cache hit. Loading %d validated historical chunks for: %s", len(valid_cached), url)
-                        retrieved_context.extend(valid_cached)
-                        parsed_domain = urlparse(url).netloc.replace("www.", "")
-                        matched = next((d for d in TRUSTED_WEB_SOURCES if d in parsed_domain), "Source")
-                        s_name = TRUSTED_WEB_SOURCES.get(matched, {"name": "Cached Reference"})["name"]
-                        if s_name not in context_sources:
-                            context_sources.append(s_name)
+                        logger.info(
+                            "💾 Cache hit. Loading %d validated chunks for: %s",
+                            len(valid_cached),
+                            url
+                        )
+
+                        source_chunks_map.setdefault(source_name, []).extend(valid_cached)
+
+                        if source_name not in context_sources:
+                            context_sources.append(source_name)
+
                         continue
-                    
+
             except Exception as cache_err:
                 logger.warning("Cache lookup pass bypassed safely: %s", cache_err)
 
-            # Execute web scraping
-            raw_chunks = web_scraper.scrape_to_structured_markdown(
-                url, 
-                query_condition=clinical_subject or search_query
-            ) or []
-            
+            # -----------------------------------------------------
+            # Web scraping pass
+            # -----------------------------------------------------
+            raw_chunks = (
+                web_scraper.scrape_to_structured_markdown(
+                    url,
+                    query_condition=clinical_subject or search_query
+                )
+                or []
+            )
+
             raw_count = len(raw_chunks)
             logger.info("📄 Scraper returned %d raw chunks from %s", raw_count, url)
 
-            if raw_count > 0:
-                chunk_lengths = [
-                    len(c.get("text", "") if isinstance(c, dict) else str(c))
-                    for c in raw_chunks
-                ]
-                logger.info("📏 Raw chunk character lengths: %s", chunk_lengths)
-
             # Quality Filter: Purge boilerplate text chunks under 120 characters
             web_chunks = [
-                c for c in raw_chunks 
-                if len(c.get("text", "") if isinstance(c, dict) else str(c)) > 120
+                chunk
+                for chunk in raw_chunks
+                if len(chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)) > 120
             ]
-            
+
             logger.info("🧹 Quality filter retained %d/%d chunks from %s", len(web_chunks), raw_count, url)
 
             if not web_chunks:
                 logger.warning("⚠️ No usable chunks retained after quality filtering for %s", url)
                 continue
 
-            parsed = urlparse(url)
-            domain = parsed.netloc.replace("www.", "")
-            matched_domain = next((d for d in TRUSTED_WEB_SOURCES if d in domain), "Trusted Source")
-            source_info = TRUSTED_WEB_SOURCES.get(matched_domain, {"name": "Trusted Source", "score": 7})
-
+            # -----------------------------------------------------
+            # Metadata creation & vector DB persistence
+            # -----------------------------------------------------
             path_parts = [p for p in parsed.path.split("/") if p]
-            condition = "Diet & Nutrition" if search_domain == "nutrition" else "General Health"
-            
+
+            condition = (
+                "Diet & Nutrition"
+                if search_domain == "nutrition"
+                else "General Health"
+            )
+
             target_triggers = {"conditions", "symptoms", "nutrition"}
             matching_dirs = list(target_triggers.intersection(path_parts))
+
             if matching_dirs:
                 idx = path_parts.index(matching_dirs[0])
                 if idx + 1 < len(path_parts):
@@ -508,23 +584,35 @@ def run_web_search_tool(state: AgentState) -> Dict[str, Any]:
             processed_ids = []
 
             for chunk_idx, chunk in enumerate(web_chunks[:3]):  # Limit to top 3 quality chunks per page
-                chunk_text = chunk["text"] if isinstance(chunk, dict) else str(chunk)
-                existing_meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
-                
+                chunk_text = (
+                    chunk["text"]
+                    if isinstance(chunk, dict)
+                    else str(chunk)
+                )
+
+                existing_meta = (
+                    chunk.get("metadata", {})
+                    if isinstance(chunk, dict)
+                    else {}
+                )
+
                 meta = build_metadata(
-                    source=source_info["name"],
+                    source=source_name,
                     url=url,
                     condition=existing_meta.get("condition", condition),
                     section=existing_meta.get("section_header", "Overview"),
-                    trust_score=source_info["score"],
+                    trust_score=source_info["score"],  # Dynamic score lookup (10, 9, 8, or default 7)
                     risk=active_graph_risk,
-                    category="Diet & Nutrition" if search_domain == "nutrition" else "General Medicine"
+                    category=(
+                        "Diet & Nutrition"
+                        if search_domain == "nutrition"
+                        else "General Medicine"
+                    )
                 )
-                
-                # Guaranteed Unique Hash ID per Chunk Payload
+
                 unique_seed = f"{url}#{chunk_idx}#{chunk_text}"
                 chunk_id = hashlib.sha256(unique_seed.encode("utf-8")).hexdigest()
-                
+
                 if chunk_id not in processed_ids:
                     processed_texts.append(chunk_text)
                     processed_metadatas.append(meta)
@@ -536,23 +624,49 @@ def run_web_search_tool(state: AgentState) -> Dict[str, Any]:
                     metadatas=processed_metadatas,
                     ids=processed_ids
                 )
-                retrieved_context.extend(processed_texts)
-                ref_str = f"{source_info['name']} • {condition}"
-                if ref_str not in context_sources:
-                    context_sources.append(ref_str)
+
+                source_chunks_map.setdefault(source_name, []).extend(processed_texts)
+
+                if source_name not in context_sources:
+                    context_sources.append(source_name)
 
         except Exception as page_ex:
             logger.exception("❌ Isolated failure processing web page %s | Reason: %s", url, page_ex)
             continue
 
-    # 6. Cap Maximum Retrieved Web Chunks
-    MAX_WEB_CHUNKS = 3
-    if len(retrieved_context) > MAX_WEB_CHUNKS:
-        logger.info(f"🛑 Capping retrieved web chunks to {MAX_WEB_CHUNKS}. Original count: {len(retrieved_context)}")
-        retrieved_context = retrieved_context[:MAX_WEB_CHUNKS]
+    # =============================================================
+    # STEP 6 — DIVERSE ROUND-ROBIN INTERLEAVING
+    # =============================================================
+    MAX_WEB_CHUNKS = 5
+    retrieved_context = []
+    selected_sources = []
 
-    elapsed_ms = (time.time() - start_time) * 1000
-    logger.info(f"⏱️ Web Scraper Complete. Latency: {elapsed_ms:.2f} ms | Located Chunks: {len(retrieved_context)}")
+    # Interleave 1 chunk per institutional source until capped or exhausted
+    while (
+        len(retrieved_context) < MAX_WEB_CHUNKS
+        and any(source_chunks_map.values())
+    ):
+        for source_name in list(source_chunks_map.keys()):
+            if not source_chunks_map[source_name]:
+                continue
+
+            chunk = source_chunks_map[source_name].pop(0)
+            retrieved_context.append(chunk)
+            selected_sources.append(source_name)
+
+            if len(retrieved_context) >= MAX_WEB_CHUNKS:
+                break
+
+    logger.info(
+        "📚 Final web context: %d chunks from sources: %s",
+        len(retrieved_context),
+        selected_sources
+    )
+    logger.info(
+        "⏱️ Diverse Web Scraper Complete. Latency: %.2f ms | Retained Chunks: %d",
+        (time.time() - start_time) * 1000,
+        len(retrieved_context)
+    )
 
     return {
         "retrieved_context": retrieved_context,
