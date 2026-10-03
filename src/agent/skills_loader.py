@@ -7,10 +7,11 @@ Loads and caches focused Markdown skill specifications to inject into Ollama pay
 import logging
 from functools import lru_cache
 from pathlib import Path
+from config.settings import BASE_DIR
 
 logger = logging.getLogger("skills_loader")
 
-SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+SKILLS_DIR = BASE_DIR / "config" / "skills"
 
 
 @lru_cache(maxsize=8)

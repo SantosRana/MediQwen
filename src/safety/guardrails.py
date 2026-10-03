@@ -164,26 +164,192 @@ class Guardrails:
 
     # =======================================================================
     # 2. SECURITY BOUNDARY
-    # =======================================================================
+    # =====================================================================
 
     PROMPT_INJECTIONS: List[str] = [
-        r"ignore\s+(all\s+)?(previous|prior|system)\s+instructions",
-        r"disregard\s+(all\s+)?(previous|prior|system)\s+instructions",
-        r"forget\s+(all\s+)?(previous|prior)\s+(rules|instructions)",
-        r"reveal\s+(your\s+)?(system\s+)?prompt",
-        r"print\s+(your\s+)?(initial\s+)?system\s+prompt",
-        r"show\s+(me\s+)?(your\s+)?(system|developer)\s+instructions",
-        r"show\s+(me\s+)?(the\s+)?contents\s+of\s+(your\s+)?internal",
-        r"output\s+(the\s+)?(developer\s+)?directives",
-        r"reveal\s+hidden\s+prompt",
-        r"system\s+override",
-        r"override\s+(your\s+)?instructions",
-        r"disable\s+(medical\s+)?safety(\s+protocols)?",
-        r"bypass\s+safety",
-        r"act\s+as\s+dan",
-        r"unrestricted\s+chatbot",
-        r"output\s+your\s+chain\s+of\s+thought"
-    ]
+    # -----------------------------------------------------------------------
+    # 1. Direct instruction override
+    # -----------------------------------------------------------------------
+    r"\bignore\s+(?:all\s+)?(?:the\s+)?"
+    r"(?:previous|prior|above|earlier|system|developer)\s+"
+    r"(?:instructions?|rules?|directives?|constraints?|guidelines?)\b",
+
+    r"\bdisregard\s+(?:all\s+)?(?:the\s+)?"
+    r"(?:previous|prior|above|earlier|system|developer)\s+"
+    r"(?:instructions?|rules?|directives?|constraints?|guidelines?)\b",
+
+    r"\bforget\s+(?:all\s+)?(?:the\s+)?"
+    r"(?:previous|prior|above|earlier)\s+"
+    r"(?:instructions?|rules?|directives?|constraints?)\b",
+
+    r"\bdo\s+not\s+follow\s+(?:the\s+)?"
+    r"(?:previous|prior|system|developer)\s+"
+    r"(?:instructions?|rules?|guidelines?)\b",
+
+    r"\bstop\s+following\s+(?:your\s+)?"
+    r"(?:system|developer|safety)\s+"
+    r"(?:instructions?|rules?|policies?|guidelines?)\b",
+
+    # -----------------------------------------------------------------------
+    # 2. Explicit system/developer prompt extraction
+    # -----------------------------------------------------------------------
+    r"\b(?:reveal|show|display|print|output|provide|give)\s+"
+    r"(?:me\s+)?(?:your\s+)?"
+    r"(?:system|developer|hidden|internal)\s+"
+    r"(?:prompt|instructions?|directives?|rules?|message)\b",
+
+    r"\b(?:reveal|show|display|print|output|provide|give)\s+"
+    r"(?:me\s+)?(?:the\s+)?"
+    r"(?:full\s+|complete\s+|exact\s+)?"
+    r"(?:system|developer)\s+prompt\b",
+
+    r"\bwhat\s+(?:is|are)\s+(?:your\s+)?"
+    r"(?:system|developer|hidden|internal)\s+"
+    r"(?:prompt|instructions?|rules?|directives?)\b",
+
+    r"\b(?:repeat|quote|recite|echo)\s+"
+    r"(?:your\s+)?(?:system|developer|hidden|internal)\s+"
+    r"(?:prompt|instructions?|message)\b",
+
+    # -----------------------------------------------------------------------
+    # 3. Hidden context / internal data extraction
+    # -----------------------------------------------------------------------
+    r"\b(?:reveal|show|print|output|dump|expose)\s+"
+    r"(?:your\s+)?(?:hidden|internal|private|secret)\s+"
+    r"(?:context|instructions?|message|configuration|config|rules?)\b",
+
+    r"\b(?:show|reveal|output|dump)\s+"
+    r"(?:everything|all\s+text|all\s+content)\s+"
+    r"(?:before|above|behind)\s+"
+    r"(?:my\s+)?(?:message|request|query)\b",
+
+    r"\b(?:what|tell\s+me)\s+(?:came|was)\s+"
+    r"(?:before|above)\s+(?:my\s+)?"
+    r"(?:message|question|request)\b",
+
+    # -----------------------------------------------------------------------
+    # 4. Instruction hierarchy manipulation
+    # -----------------------------------------------------------------------
+    r"\b(?:system|developer|assistant|user)\s+message\s+"
+    r"(?:override|replacement|replacement\s+instructions?)\b",
+
+    r"\b(?:treat|consider|interpret)\s+(?:my\s+)?"
+    r"(?:next|following)\s+(?:message|text|instruction)\s+"
+    r"(?:as|like)\s+(?:a\s+)?"
+    r"(?:system|developer)\s+(?:message|instruction)\b",
+
+    r"\b(?:this|the\s+following)\s+"
+    r"(?:is|should\s+be)\s+(?:your\s+)?"
+    r"(?:new|replacement|updated)\s+"
+    r"(?:system|developer)\s+(?:prompt|instructions?|rules?)\b",
+
+    r"\b(?:pretend|assume|act\s+as\s+if)\s+"
+    r"(?:the\s+)?(?:system|developer)\s+"
+    r"(?:said|instructed|commanded)\b",
+
+    # -----------------------------------------------------------------------
+    # 5. Role / identity manipulation
+    # -----------------------------------------------------------------------
+    r"\b(?:you\s+are\s+now|from\s+now\s+on\s+you\s+are|"
+    r"your\s+new\s+role\s+is)\b",
+
+    r"\b(?:act|behave|respond|operate)\s+as\s+"
+    r"(?:an?\s+)?(?:unrestricted|uncensored|unfiltered|"
+    r"jailbroken|evil|malicious)\s+(?:ai|assistant|chatbot|model)\b",
+
+    r"\b(?:pretend|roleplay)\s+(?:that\s+you\s+are|as)\s+"
+    r"(?:an?\s+)?(?:unrestricted|uncensored|unfiltered|"
+    r"jailbroken)\s+(?:ai|assistant|chatbot|model)\b",
+
+    r"\b(?:you\s+are|act\s+as)\s+(?:DAN|dan)\b",
+
+    r"\b(?:DAN|dan)\s+(?:mode|protocol|prompt)\b",
+
+    # -----------------------------------------------------------------------
+    # 6. Safety-policy bypass
+    # -----------------------------------------------------------------------
+    r"\b(?:bypass|circumvent|disable|remove|ignore|evade)\s+"
+    r"(?:the\s+)?"
+    r"(?:safety|security|content|moderation|guardrail|guardrails)\s+"
+    r"(?:rules?|filters?|protocols?|restrictions?|controls?)?\b",
+
+    r"\b(?:turn|switch)\s+off\s+"
+    r"(?:the\s+)?(?:safety|security|moderation|guardrail|guardrails)\b",
+
+    r"\b(?:disable|deactivate|remove)\s+"
+    r"(?:your\s+)?(?:safety|security|content)\s+"
+    r"(?:filters?|restrictions?|rules?|protocols?)\b",
+
+    r"\b(?:ignore|bypass)\s+"
+    r"(?:medical|clinical)\s+"
+    r"(?:safety|security)\s+"
+    r"(?:rules?|protocols?|restrictions?|guidelines?)\b",
+
+    # -----------------------------------------------------------------------
+    # 7. Jailbreak terminology
+    # -----------------------------------------------------------------------
+    r"\b(?:jailbreak|jailbroken|uncensored|unfiltered|unrestricted)\s+"
+    r"(?:mode|model|assistant|chatbot|response)\b",
+
+    r"\b(?:enable|activate|enter|switch\s+to)\s+"
+    r"(?:jailbreak|developer|debug|unrestricted|uncensored|"
+    r"unfiltered)\s+mode\b",
+
+    r"\b(?:no|without)\s+(?:safety|content|moderation|"
+    r"guardrail|guardrails)\s+(?:restrictions?|filters?|rules?)\b",
+
+    # -----------------------------------------------------------------------
+    # 8. Chain-of-thought / hidden reasoning extraction
+    # -----------------------------------------------------------------------
+    r"\b(?:reveal|show|print|output|provide|give)\s+"
+    r"(?:your\s+)?"
+    r"(?:chain\s+of\s+thought|chain-of-thought|"
+    r"hidden\s+reasoning|private\s+reasoning|internal\s+reasoning)\b",
+
+    r"\b(?:show|reveal|print|output)\s+"
+    r"(?:all\s+)?(?:your\s+)?"
+    r"(?:reasoning|thought\s+process|thinking\s+process)\b",
+
+    r"\b(?:explain|describe)\s+"
+    r"(?:your\s+)?(?:private|hidden|internal)\s+"
+    r"(?:reasoning|thought\s+process)\b",
+
+    # -----------------------------------------------------------------------
+    # 9. Prompt reconstruction / extraction techniques
+    # -----------------------------------------------------------------------
+    r"\b(?:reconstruct|recover|extract|retrieve)\s+"
+    r"(?:your\s+)?(?:system|developer|hidden|internal)\s+"
+    r"(?:prompt|instructions?|message|context)\b",
+
+    r"\b(?:leak|leakage|exfiltrate|extract)\s+"
+    r"(?:the\s+)?(?:system|developer|hidden|internal)\s+"
+    r"(?:prompt|instructions?|context|message)\b",
+
+    r"\b(?:what\s+was|what\s+were)\s+"
+    r"(?:your\s+)?(?:original|initial|hidden|system|developer)\s+"
+    r"(?:prompt|instructions?|rules?)\b",
+
+    # -----------------------------------------------------------------------
+    # 10. Explicit instruction to expose policy/rules
+    # -----------------------------------------------------------------------
+    r"\b(?:list|enumerate|print|show|reveal)\s+"
+    r"(?:all\s+)?(?:your\s+)?"
+    r"(?:safety|security|moderation|guardrail|guardrails)\s+"
+    r"(?:rules?|policies?|restrictions?|criteria|conditions)\b",
+
+    r"\b(?:tell|show|explain)\s+me\s+"
+    r"(?:exactly\s+)?how\s+your\s+"
+    r"(?:safety|moderation|guardrail|guardrails)\s+"
+    r"(?:works|rules?|filters?)\b",
+
+    # -----------------------------------------------------------------------
+    # 11. Common instruction-injection phrasing
+    # -----------------------------------------------------------------------
+    r"\b(?:new|updated|replacement)\s+instructions?\s*:",
+    r"\b(?:system|developer)\s+prompt\s*:",
+    r"\b(?:system|developer)\s+message\s*:",
+    r"\b(?:assistant|model)\s+instructions?\s*:",
+]
 
     # =======================================================================
     # 3. SELF-HARM / CRISIS DETECTION
@@ -269,19 +435,64 @@ class Guardrails:
     }
 
     # =======================================================================
-    # 6. SIMPLE TECHNICAL / CODE BLOCKING
+    # 6. TECHNICAL / CODE INTERCEPT PATTERNS
     # =======================================================================
 
     CODE_PATTERNS: List[str] = [
+        # 1. Explicit fenced code blocks
         r"```[\s\S]*?```",
-        r"(?:\b|^\s*)(?:def|class|function)\s+\w+",
-        r"(?:\b|^\s*)(?:import|from)\s+\w+",
-        r"\bwrite\s+(?:a\s+)?(?:python|javascript|java|sql|bash)\b",
-        r"\bgenerate\s+(?:a\s+)?(?:python|javascript|java|sql|bash)\b",
-        r"\bdebug\s+(?:this\s+)?(?:python|javascript|java|sql)\b",
-        r"\bexplain\s+(?:this\s+)?(?:python|javascript|java|sql)\s+code\b",
+
+        # 2. Programming declarations / syntax (Self-contained multiline flags)
+        r"(?m)^\s*(?:def|class|function|interface|struct|enum)\s+\w+",
+        r"(?m)^\s*(?:import|from|using|include)\s+[A-Za-z_][\w.]*",
+        r"\b(?:public|private|protected)\s+(?:class|static|void|int|string)\b",
+        r"\b(?:const|let|var)\s+\w+\s*=",
+        r"\b(?:if|for|while|switch)\s*\([^)]*\)\s*\{",
+
+        # 3. Explicit requests to write / generate / create code
+        r"\b(?:write|generate|create|build|implement|develop)\s+(?:a\s+)?(?:script|program|function|class|code|application|app)\b",
+        r"\b(?:write|generate|create|build|implement)\s+(?:a\s+)?(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\b",
+
+        # 4. Programming language + code context
+        r"\b(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\s+(?:code|script|program|function|class|application)\b",
+        r"\b(?:code|script|program|function|class)\s+(?:in|using|with)\s+(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\b",
+
+        # 5. Debugging / programming error requests
+        r"\b(?:debug|fix|refactor|optimize|compile|run)\s+(?:this|the|my)?\s*(?:code|script|program|function|class)\b",
+        r"\b(?:debug|fix|troubleshoot)\s+(?:this\s+)?(?:python|javascript|typescript|java|c\+\+|cpp|c#|sql|bash|rust|golang|go|php|ruby|kotlin|swift)\b",
+
+        # 6. Common programming / compiler errors
+        r"\bsegmentation\s+fault\b",
+        r"\bsegfault\b",
+        r"\b(?:null|nil|nullptr)\s+pointer\b",
+        r"\bpointer\s+(?:error|exception|issue|bug)\b",
+        r"\bmemory\s+leak\b",
+        r"\b(?:stack|heap)\s+(?:overflow|corruption)\b",
+        r"\bcompiler\s+(?:error|warning)\b",
+        r"\b(?:syntax|runtime|type|compile[- ]time)\s+error\b",
+        r"\b(?:traceback|stack\s+trace)\b",
+        r"\bundefined\s+(?:reference|variable|symbol)\b",
+        r"\b(?:dependency|package)\s+(?:error|conflict)\b",
+
+        # 7. Programming-specific terminology with strong technical context
+        r"\b(?:API|SDK)\s+(?:endpoint|request|response|integration|authentication)\b",
+        r"\b(?:REST|GraphQL)\s+(?:API|endpoint|query)\b",
+        r"\b(?:database|DB)\s+(?:query|schema|migration|connection)\b",
+        r"\b(?:regex|regular\s+expression)\s+(?:code|pattern|bug|syntax)\b",
+        r"\b(?:Git|GitHub|GitLab)\s+(?:command|repository|branch|merge|commit)\b",
+
+        # 8. SQL / database programming
+        r"\b(?:SELECT|INSERT|UPDATE|DELETE)\s+.+\s+(?:FROM|INTO|SET|WHERE)\b",
         r"\bsql\s+injection\b",
-        r"\bbypass\s+firewall\b"
+        r"\b(?:write|generate|create)\s+(?:a\s+)?sql\s+(?:query|statement)\b",
+
+        # 9. Explicit cybersecurity / system-bypass requests
+        r"\b(?:bypass|disable|circumvent)\s+(?:a\s+)?(?:firewall|authentication|authorization|security|access\s+control)\b",
+        r"\b(?:exploit|hack|penetrate)\s+(?:a\s+)?(?:system|server|network|website|application|database)\b",
+        r"\b(?:reverse\s+shell|remote\s+shell|privilege\s+escalation)\b",
+
+        # 10. Strong programming context
+        r"\b(?:IDE|compiler|interpreter|runtime|package\s+manager|virtual\s+environment|dependency|repository|commit|branch)\b"
     ]
 
     # =======================================================================
