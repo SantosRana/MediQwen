@@ -1,4 +1,4 @@
-# 🩺 MediQwen: Edge Multimodal Clinical AI Engine
+# 🩺 MediQwen: Edge Multimodal Clinical AI
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Agentic%20FSM-orange.svg)](https://github.com/langchain-ai/langgraph)
