@@ -125,11 +125,10 @@ def render_risk_and_sources(sources, risk_level, show_emergency_banner=False, is
             unsafe_allow_html=True,
         )
 
-    # Render risk badge ONLY for active clinical/multimodal turns
+    # Show risk badge if a valid risk level is present and it's a medical turn
     should_show_risk = (
         is_medical 
-        and normalized_dialog in {"clinical", "multimodal_triage"}
-        and normalized_risk not in {"unrated/nutrition", ""}
+        and normalized_risk in {"low", "medium", "high", "emergency"}
     )
 
     if should_show_risk:
@@ -220,8 +219,21 @@ with st.sidebar:
 
     with st.expander("ℹ️ System Architecture"):
         st.markdown(
-            "<p class='disclaimer-text'><b>MediQwen</b> utilizes a local multimodal agent architecture combining "
-            "vector RAG retrieval with unified vision-language execution.</p>",
+            """
+            #### **MediQwen Agent Pipeline**
+            
+            **1. Safety & Gatekeeping**
+            * 🛡️ **Layer 1 Guardrails:** Fast-path regex interception for injections, self-harm, and non-medical code.
+            * 🎯 **BGE Scope Classifier:** Cosine similarity gate classifying queries (`MEDICAL`, `NUTRITION`, `CASUAL`, `OUT_OF_SCOPE`).
+
+            **2. Triage & Context Retrieval**
+            * 🚨 **Risk Assessor:** Tiered risk analysis (`LOW`, `MEDIUM`, `HIGH`, `EMERGENCY`).
+            * 📷 **Multimodal Engine:** RGB normalization and PNG Base64 buffer generation for visual analysis.
+            * 📚 **Hybrid Vector RAG:** Local ChromaDB indexing with `BAAI/bge-large-en-v1.5` and cached web fallback.
+
+            **3. Local Generation**
+            * 🧠 **Ollama Execution:** Privacy-first inference with dynamic system prompt generation based on FSM state.
+            """,
             unsafe_allow_html=True,
         )
 
@@ -345,13 +357,21 @@ if user_query:
                     final_answer = data.get("agent_response", "")
                     sources_found = data.get("context_sources", [])
                     risk_level = data.get("risk_level", "low")
+                    scope = data.get("scope", "MEDICAL")
+                    is_medical = scope in ["MEDICAL", "NUTRITION", "MULTIMODAL"]
                     
                     # Persist updated state returned by backend ---
                     st.session_state.clinical_subject = data.get("clinical_subject")
                     st.session_state.dialog_state = data.get("dialog_state", "chat")
                     st.session_state.followup_pending = data.get("followup_pending", False)
 
-                    render_risk_and_sources(sources_found, risk_level, show_emergency_banner=True)
+                    render_risk_and_sources(
+                    sources=sources_found,
+                    risk_level=risk_level,
+                    show_emergency_banner=True,
+                    is_medical=is_medical,  # Pass true if medical/multimodal
+                    dialog_state=st.session_state.dialog_state
+                     )
                     response_placeholder.markdown(final_answer)
 
                     st.session_state.messages.append({

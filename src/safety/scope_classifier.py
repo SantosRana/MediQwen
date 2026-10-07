@@ -159,6 +159,10 @@ _NUTRITION_MARKERS = (
     "fat",
     "sugar",
     "fiber",
+    "muscle building",
+    "weight loss",
+    "weight gain",
+    "healthy eating",
 )
 
 

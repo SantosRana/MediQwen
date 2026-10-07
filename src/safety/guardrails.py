@@ -439,62 +439,64 @@ class Guardrails:
     # =======================================================================
 
     CODE_PATTERNS: List[str] = [
-        # 1. Explicit fenced code blocks
-        r"```[\s\S]*?```",
+    # 1. Explicit fenced code blocks
+    r"```[\s\S]*?```",
 
-        # 2. Programming declarations / syntax (Self-contained multiline flags)
-        r"(?m)^\s*(?:def|class|function|interface|struct|enum)\s+\w+",
-        r"(?m)^\s*(?:import|from|using|include)\s+[A-Za-z_][\w.]*",
-        r"\b(?:public|private|protected)\s+(?:class|static|void|int|string)\b",
-        r"\b(?:const|let|var)\s+\w+\s*=",
-        r"\b(?:if|for|while|switch)\s*\([^)]*\)\s*\{",
+    # 2. Programming declarations / syntax (Self-contained flags & loops)
+    r"(?m)^\s*(?:def|class|function|interface|struct|enum)\s+\w+",
+    r"(?m)^\s*(?:import|from|using|include)\s+[A-Za-z_][\w.]*",
+    r"\b(?:public|private|protected)\s+(?:class|static|void|int|string)\b",
+    r"\b(?:const|let|var)\s+\w+\s*=",
+    r"\b(?:if|for|while|switch)\s*\([^)]*\)\s*\{",  # C-style loops
+    r"\bfor\s+\w+\s+in\s+(?:range|enumerate|zip)\s*\([^)]*\)\s*:",  # Python for loops
+    r"\b(?:for|while|if|elif)\s+.*?\s*:\s*(?:print|return|break|continue|pass|raise)\b", # Inline Python blocks
 
-        # 3. Explicit requests to write / generate / create code
-        r"\b(?:write|generate|create|build|implement|develop)\s+(?:a\s+)?(?:script|program|function|class|code|application|app)\b",
-        r"\b(?:write|generate|create|build|implement)\s+(?:a\s+)?(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\b",
+    # 3. Explicit requests to write / generate / create code
+    r"\b(?:write|generate|create|build|implement|develop)\s+(?:a\s+)?(?:script|program|function|class|code|application|app)\b",
+    r"\b(?:write|generate|create|build|implement)\s+(?:a\s+)?(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\b",
 
-        # 4. Programming language + code context
-        r"\b(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\s+(?:code|script|program|function|class|application)\b",
-        r"\b(?:code|script|program|function|class)\s+(?:in|using|with)\s+(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\b",
+    # 4. Programming language + code context
+    r"\b(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\s+(?:code|script|program|function|class|application)\b",
+    r"\b(?:code|script|program|function|class)\s+(?:in|using|with)\s+(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|sql|bash|shell|rust|golang|go|php|ruby|kotlin|swift)\b",
 
-        # 5. Debugging / programming error requests
-        r"\b(?:debug|fix|refactor|optimize|compile|run)\s+(?:this|the|my)?\s*(?:code|script|program|function|class)\b",
-        r"\b(?:debug|fix|troubleshoot)\s+(?:this\s+)?(?:python|javascript|typescript|java|c\+\+|cpp|c#|sql|bash|rust|golang|go|php|ruby|kotlin|swift)\b",
+    # 5. Debugging / programming error requests
+    r"\b(?:debug|fix|refactor|optimize|compile|run)\s+(?:this|the|my)?\s*(?:code|script|program|function|class)\b",
+    r"\b(?:debug|fix|troubleshoot)\s+(?:this\s+)?(?:python|javascript|typescript|java|c\+\+|cpp|c#|sql|bash|rust|golang|go|php|ruby|kotlin|swift)\b",
 
-        # 6. Common programming / compiler errors
-        r"\bsegmentation\s+fault\b",
-        r"\bsegfault\b",
-        r"\b(?:null|nil|nullptr)\s+pointer\b",
-        r"\bpointer\s+(?:error|exception|issue|bug)\b",
-        r"\bmemory\s+leak\b",
-        r"\b(?:stack|heap)\s+(?:overflow|corruption)\b",
-        r"\bcompiler\s+(?:error|warning)\b",
-        r"\b(?:syntax|runtime|type|compile[- ]time)\s+error\b",
-        r"\b(?:traceback|stack\s+trace)\b",
-        r"\bundefined\s+(?:reference|variable|symbol)\b",
-        r"\b(?:dependency|package)\s+(?:error|conflict)\b",
+    # 6. Common programming / compiler errors
+    r"\bsegmentation\s+fault\b",
+    r"\bsegfault\b",
+    r"\b(?:null|nil|nullptr)\s+pointer\b",
+    r"\bpointer\s+(?:error|exception|issue|bug)\b",
+    r"\bmemory\s+leak\b",
+    r"\b(?:stack|heap)\s+(?:overflow|corruption)\b",
+    r"\bcompiler\s+(?:error|warning)\b",
+    r"\b(?:syntax|runtime|type|compile[ \t]*time)\s+error\b",
+    r"\b(?:traceback|stack\s+trace)\b",
+    r"\bundefined\s+(?:reference|variable|symbol)\b",
+    r"\b(?:dependency|package)\s+(?:error|conflict)\b",
 
-        # 7. Programming-specific terminology with strong technical context
-        r"\b(?:API|SDK)\s+(?:endpoint|request|response|integration|authentication)\b",
-        r"\b(?:REST|GraphQL)\s+(?:API|endpoint|query)\b",
-        r"\b(?:database|DB)\s+(?:query|schema|migration|connection)\b",
-        r"\b(?:regex|regular\s+expression)\s+(?:code|pattern|bug|syntax)\b",
-        r"\b(?:Git|GitHub|GitLab)\s+(?:command|repository|branch|merge|commit)\b",
+    # 7. Programming-specific terminology with strong technical context
+    r"\b(?:API|SDK)\s+(?:endpoint|request|response|integration|authentication)\b",
+    r"\b(?:REST|GraphQL)\s+(?:API|endpoint|query)\b",
+    r"\b(?:database|DB)\s+(?:query|schema|migration|connection)\b",
+    r"\b(?:regex|regular\s+expression)\s+(?:code|pattern|bug|syntax)\b",
+    r"\b(?:Git|GitHub|GitLab)\s+(?:command|repository|branch|merge|commit)\b",
 
-        # 8. SQL / database programming
-        r"\b(?:SELECT|INSERT|UPDATE|DELETE)\s+.+\s+(?:FROM|INTO|SET|WHERE)\b",
-        r"\bsql\s+injection\b",
-        r"\b(?:write|generate|create)\s+(?:a\s+)?sql\s+(?:query|statement)\b",
+    # 8. SQL / database programming
+    r"\b(?:SELECT|INSERT|UPDATE|DELETE)\s+.+\s+(?:FROM|INTO|SET|WHERE)\b",
+    r"\bsql\s+injection\b",
+    r"\b(?:write|generate|create)\s+(?:a\s+)?sql\s+(?:query|statement)\b",
 
-        # 9. Explicit cybersecurity / system-bypass requests
-        r"\b(?:bypass|disable|circumvent)\s+(?:a\s+)?(?:firewall|authentication|authorization|security|access\s+control)\b",
-        r"\b(?:exploit|hack|penetrate)\s+(?:a\s+)?(?:system|server|network|website|application|database)\b",
-        r"\b(?:reverse\s+shell|remote\s+shell|privilege\s+escalation)\b",
+    # 9. Explicit cybersecurity / system-bypass requests
+    r"\b(?:bypass|disable|circumvent)\s+(?:a\s+)?(?:firewall|authentication|authorization|security|access\s+control)\b",
+    r"\b(?:exploit|hack|penetrate)\s+(?:a\s+)?(?:system|server|network|website|application|database)\b",
+    r"\b(?:reverse\s+shell|remote\s+shell|privilege\s+escalation)\b",
 
-        # 10. Strong programming context
-        r"\b(?:IDE|compiler|interpreter|runtime|package\s+manager|virtual\s+environment|dependency|repository|commit|branch)\b"
-    ]
-
+    # 10. Strong programming context
+    r"\b(?:IDE|compiler|interpreter|runtime|package\s+manager|virtual\s+environment|dependency|repository|commit|branch)\b"
+]
+    
     # =======================================================================
     # 7. OUTPUT SAFETY
     # =======================================================================
@@ -858,8 +860,8 @@ class Guardrails:
         if self.is_code_request(text_raw):
             logger.info("🛑 Technical/code request blocked.")
             return False, (
-                "I am a specialized medical AI assistant and cannot "
-                "provide programming or software development assistance."
+                "I am a specialized medical AI assistant designed specifically for health and clinical information, so I cannot "
+                "provide programming or software development assistance. If you have a health-related question, I’d be happy to help."
             )
 
     

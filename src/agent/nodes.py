@@ -148,33 +148,50 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     scope_source = scope_result["scope_source"]
     scope_debug = scope_result
 
+    # =============================================================
     # STEP 3 — CLINICAL SUBJECT MEMORY / EXTRACTION
     # =============================================================
     clinical_subject = existing_subject
-    logger.info("📥 Incoming clinical_subject from state: '%s'", existing_subject)
+    logger.info(
+        "📥 Incoming clinical_subject from state: '%s'",
+        existing_subject,
+    )
 
-    # Strictly extract new clinical subjects ONLY for verified medical/nutrition queries
-    if scope in {"MEDICAL", "NUTRITION"}:
+    # -------------------------------------------------------------
+    # Explicit topic transition
+    # -------------------------------------------------------------
+    # A new nutrition query starts a nutrition context rather than
+    # inheriting a stale medical condition from the previous turn.
+    if scope == "NUTRITION":
+        clinical_subject = None
+        logger.info("🥗 Nutrition scope detected. Detaching previous clinical_subject context.")
+
+    # -------------------------------------------------------------
+    # Medical subject extraction & context preservation
+    # -------------------------------------------------------------
+    elif scope == "MEDICAL":
 
         # 1. Configured medical vocabulary (exact/high-confidence patterns)
+        matched_new_subject = None
         for pattern in MEDICAL_SUBJECT_PATTERNS:
             match = re.search(pattern, query_lower)
             if match:
-                clinical_subject = match.group(1).strip()
+                matched_new_subject = match.group(1).strip()
                 logger.info(
                     "🎯 Clinical subject matched from configured pattern: '%s'",
-                    clinical_subject
+                    matched_new_subject,
                 )
                 break
 
-        # 2. Dynamic intent-based fallback for unlisted medical subjects
-        if not clinical_subject:
+        if matched_new_subject:
+            clinical_subject = matched_new_subject
 
+        # 2. Dynamic intent-based extraction when no static pattern matched
+        elif not clinical_subject:
             for pattern in DYNAMIC_SUBJECT_PATTERNS:
                 match = re.search(pattern, query_lower)
                 if match:
                     extracted_raw = match.group(1).strip()
-                    # Strip leading articles or possessive pronouns
                     clean_subject = re.sub(
                         r"^\s*(?:a|an|the|this|that|my|some)\s+",
                         "",
@@ -186,9 +203,12 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
                         clinical_subject = clean_subject
                         logger.info(
                             "🎯 Clinical subject extracted via dynamic fallback: '%s'",
-                            clinical_subject
+                            clinical_subject,
                         )
                         break
+        else:
+            logger.info("🔄 Preserving existing clinical_subject for follow-up query: '%s'", clinical_subject)
+            
     # =============================================================
     # STEP 4 — RETRIEVAL INTENT
     # =============================================================
