@@ -303,19 +303,14 @@ def resolve_scope_with_context(
     separate agent or LLM call.
 
     Priority:
-        1. Explicit technical intent → OUT_OF_SCOPE
-        2. Explicit nutrition intent → NUTRITION
-        3. Existing clinical subject → MEDICAL
-        4. Otherwise → CASUAL
+        1. Explicit nutrition intent → NUTRITION
+        2. Existing clinical subject → MEDICAL
+        3. Otherwise → CASUAL
 
     Explicit current-turn intent takes priority over stale clinical context.
     """
 
     q = query.lower().strip()
-
-    # Current-turn technical intent overrides clinical context.
-    if _contains_marker(q, _TECHNICAL_MARKERS):
-        return "OUT_OF_SCOPE"
 
     # Current-turn nutrition intent is distinct from medical follow-up.
     if _contains_marker(q, _NUTRITION_MARKERS):
@@ -336,6 +331,12 @@ def classify_scope_with_gate(
 ) -> Dict[str, Any]:
     """
     Main scope-classification entry point for the Dialogue Manager.
+    
+    Refactored Hierarchy:
+        1. Explicit Nutrition intent override
+        2. Confident BGE semantic classification
+        3. Anaphora + existing clinical subject context
+        4. Deterministic fallback via resolve_scope_with_context
     """
     bge_result = classifier.classify_scope(query)
 
@@ -345,27 +346,16 @@ def classify_scope_with_gate(
 
     q_lower = query.lower().strip()
 
-    # 1. Technical / Out-of-Scope override (Hard safety check)
-    if _contains_marker(q_lower, _TECHNICAL_MARKERS):
+    # 1. Explicit Nutrition intent override
+    if _contains_marker(q_lower, _NUTRITION_MARKERS):
         return {
             **bge_result,
-            "scope": "OUT_OF_SCOPE",
-            "scope_source": "TECHNICAL_OVERRIDE",
+            "scope": "NUTRITION",
+            "scope_source": "NUTRITION_INTENT_OVERRIDE",
             "decision": "HIGH_CONFIDENCE",
         }
 
-    # 2. Anaphora check + Active dialogue context
-    has_anaphora = bool(ANAPHORIC_PATTERNS.search(q_lower))
-
-    if has_anaphora and clinical_subject:
-        return {
-            **bge_result,
-            "scope": "MEDICAL",
-            "scope_source": "ANAPHORA_CONTEXT_OVERRIDE",
-            "decision": "CONTEXT_RESOLVED",
-        }
-
-    # 3. Standard BGE confidence + margin threshold gate
+    # 2. Standard BGE confidence + margin threshold gate
     is_confident = (
         best_score >= CONFIDENCE_THRESHOLD
         and margin >= MARGIN_THRESHOLD
@@ -377,6 +367,17 @@ def classify_scope_with_gate(
             "scope": best_scope,
             "scope_source": "BGE",
             "decision": "HIGH_CONFIDENCE",
+        }
+
+    # 3. Anaphora check + Active dialogue context
+    has_anaphora = bool(ANAPHORIC_PATTERNS.search(q_lower))
+
+    if has_anaphora and clinical_subject:
+        return {
+            **bge_result,
+            "scope": "MEDICAL",
+            "scope_source": "ANAPHORA_CONTEXT_OVERRIDE",
+            "decision": "CONTEXT_RESOLVED",
         }
 
     # 4. Low-confidence / Low-margin fallback via resolve_scope_with_context

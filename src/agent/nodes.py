@@ -786,16 +786,27 @@ def run_qwen_generation(state: AgentState) -> Dict[str, Any]:
     # -------------------------------------------------------------
     if requires_retrieval and not retrieved_context:
         logger.error(
-            "❌ Generator reached with retrieval required but no approved clinical context."
+            "❌ No approved clinical context | risk=%s",
+            risk_tier,
         )
-
-        fallback_text = (
-            "I don't have sufficient approved clinical context "
-            "to provide a reliable answer for this specific question."
-        )
-
         risk_metadata["is_medical"] = True
         risk_metadata["risk_level"] = risk_tier
+
+        if risk_tier == "EMERGENCY":
+            fallback_text = (
+                "EMERGENCY: Your symptoms may indicate a life-threatening "
+                "condition. Call your local emergency number (such as 911, 112, or 999) "
+                "now and follow the dispatcher's instructions. Do not drive yourself if "
+                "you may be experiencing a medical emergency.\n\n"
+                "I could not retrieve verified clinical information for "
+                "this response. Do not delay emergency care while seeking "
+                "additional information."
+            )
+        else:
+            fallback_text = (
+                "I don't have sufficient approved clinical context "
+                "to provide a reliable answer for this specific question."
+            )
 
         return {
             "agent_response": guardrails.apply_output_guardrails(

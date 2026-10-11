@@ -107,21 +107,75 @@ def knowledge_base_router(state: AgentState) -> str:
     else:
         logger.warning("🛡️ Local DB miss in Offline Mode. Routing to safe_refusal_node to prevent ungrounded generation.")
         state["routing_trace"] = trace + ["retriever -> db_miss_offline -> safe_refusal_node"]
-        return "safe_refusal_node"
+        return "safe_refusal_node"def knowledge_base_router(state: AgentState) -> str:
+    """
+    Evaluates intent-driven retrieval status and enforces evidence grounding.
+    Allows online emergency requests to attempt trusted web retrieval before falling back to generator.
+    """
+    trace = state.get("routing_trace", [])
+    requires_retrieval = state.get("requires_retrieval", False)
+    context = state.get("retrieved_context", [])
+    is_emergency = str(state.get("risk_level", "LOW")).upper() == "EMERGENCY"
+    is_online = state.get("is_online", False)
+
+    # 1. Deferred RAG Short-Circuit: Skip retrieval if not requested
+    if not requires_retrieval:
+        logger.info("⏩ Retrieval not requested for this turn. Short-circuiting directly to Generator.")
+        state["routing_trace"] = trace + ["retriever -> no_retrieval_needed -> generator"]
+        return "generator"
+
+    # 2. Context Found: Proceed to grounded generation
+    if context:
+        logger.info(
+            "✅ RAG context located (%d chunks). Routing to generator.",
+            len(context),
+        )
+        state["routing_trace"] = trace + ["retriever -> context_found -> generator"]
+        return "generator"
+
+    # 3. Local retrieval missed: attempt trusted web retrieval when online
+    if is_online:
+        logger.warning(
+            "🌐 Local retrieval miss | emergency=%s | trying web fallback",
+            is_emergency,
+        )
+        state["routing_trace"] = trace + ["retriever -> db_miss_online -> web_search_tool"]
+        return "web_search_tool"
+
+    # 4. Offline emergency: no web fallback is possible. Route to emergency generator fallback.
+    if is_emergency:
+        logger.warning(
+            "🚨 Emergency retrieval miss in offline mode. "
+            "Routing to emergency-safe generation fallback."
+        )
+        state["routing_trace"] = trace + ["retriever -> emergency_db_miss_offline -> generator"]
+        return "generator"
+
+    # 5. Offline non-emergency miss: enforce safe refusal
+    logger.warning("🛡️ Offline retrieval miss. Routing to safe refusal.")
+    state["routing_trace"] = trace + ["retriever -> db_miss_offline -> safe_refusal_node"]
+    return "safe_refusal_node"
 
 
 def web_search_validation_router(state: AgentState) -> str:
-    """
-    Verifies if the web scraper found any verified context chunks before sending to generator.
-    """
+    """Validate web retrieval and preserve emergency-safe handling."""
     trace = state.get("routing_trace", [])
     context = state.get("retrieved_context", [])
-    
+    is_emergency = str(state.get("risk_level", "LOW")).upper() == "EMERGENCY"
+
     if context:
         state["routing_trace"] = trace + ["web_search_tool -> web_context_found -> generator"]
         return "generator"
-        
-    logger.error("❌ Retry Path Exhausted: Web searches returned zero verified documents.")
+
+    if is_emergency:
+        logger.error(
+            "🚨 Local and web retrieval failed for an emergency. "
+            "Routing to emergency-safe generation fallback."
+        )
+        state["routing_trace"] = trace + ["web_search_tool -> emergency_web_miss -> generator"]
+        return "generator"
+
+    logger.error("❌ Web retrieval returned no verified documents.")
     state["routing_trace"] = trace + ["web_search_tool -> empty_web_miss -> safe_refusal_node"]
     return "safe_refusal_node"
 
@@ -144,10 +198,7 @@ workflow.add_conditional_edges(
     }
 )
 
-# 2. Multimodal Processor Edge (Always feeds populated visual feature state into Risk Classifier)
 workflow.add_edge("multimodal_processor", "classifier")
-
-# 3. Classifier Edge (Always feeds full multimodal risk state into Retriever)
 workflow.add_edge("classifier", "retriever")
 
 # 4. Retriever Exit Conditional Edge Routing
