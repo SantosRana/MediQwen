@@ -74,42 +74,6 @@ def dialogue_fsm_switchboard(state: AgentState) -> str:
 def knowledge_base_router(state: AgentState) -> str:
     """
     Evaluates intent-driven retrieval status and enforces evidence grounding.
-    """
-    trace = state.get("routing_trace", [])
-    requires_retrieval = state.get("requires_retrieval", False)
-    context = state.get("retrieved_context", [])
-    is_emergency = str(state.get("risk_level", "LOW")).upper() == "EMERGENCY"
-    is_online = state.get("is_online", False)
-
-    # 1. Deferred RAG Short-Circuit: Skip retrieval if not requested
-    if not requires_retrieval:
-        logger.info("⏩ Retrieval not requested for this turn. Short-circuiting directly to Generator.")
-        state["routing_trace"] = trace + ["retriever -> no_retrieval_needed -> generator"]
-        return "generator"
-
-    # 2. Context Found: Proceed to grounded generation
-    if context:
-        logger.info(f"✅ RAG Context Located ({len(context)} chunks). Routing to Generator.")
-        state["routing_trace"] = trace + ["retriever -> context_found -> generator"]
-        return "generator"
-
-    # 3. Emergency Fallback: Prioritize safety response over missing DB
-    if is_emergency:
-        logger.warning("🚨 EMERGENCY DATABASE MISS: Routing directly to Generator to deliver safety warnings.")
-        state["routing_trace"] = trace + ["retriever -> emergency_db_miss -> generator"]
-        return "generator"
-
-    # 4. DB Miss Handling: Route to Web Search if online, otherwise enforce Safe Refusal
-    if is_online:
-        logger.info("🌐 Local DB miss. Web fallback enabled. Routing to web_search_tool.")
-        state["routing_trace"] = trace + ["retriever -> db_miss_online -> web_search_tool"]
-        return "web_search_tool"
-    else:
-        logger.warning("🛡️ Local DB miss in Offline Mode. Routing to safe_refusal_node to prevent ungrounded generation.")
-        state["routing_trace"] = trace + ["retriever -> db_miss_offline -> safe_refusal_node"]
-        return "safe_refusal_node"def knowledge_base_router(state: AgentState) -> str:
-    """
-    Evaluates intent-driven retrieval status and enforces evidence grounding.
     Allows online emergency requests to attempt trusted web retrieval before falling back to generator.
     """
     trace = state.get("routing_trace", [])
