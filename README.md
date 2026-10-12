@@ -362,7 +362,7 @@ python tests/benchmark/evaluate_pipeline.py
 
 A recorded demonstration of the system:
 
-- MediQwen Streamlit Interface: [View Demo](https://drive.google.com/file/d/1NHUlvXD4VJuJJ6OCb0r3D5H5NbM7cRTB/preview)
+- MediQwen Streamlit Interface: [View Demo](https://drive.google.com/file/d/1qt0OnYEFg6C8uda7JebMu3XLEUIoeBm0/preview)
 
 # 📊 Technologies
 
