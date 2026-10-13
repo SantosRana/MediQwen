@@ -128,7 +128,7 @@ class MedicalVectorStore:
             logger.error(f"❌ Failed inserting chunks: {e}")
             return False
     
-    def similarity_search(self, query: str, k: int = 3, score_threshold: float = 0.75) -> List[Document]:
+    def similarity_search(self, query: str, k: int = 3, score_threshold: float = 0.55) -> List[Document]:
         """
         Search for similar documents.
         
@@ -162,7 +162,7 @@ class MedicalVectorStore:
             logger.error(f"❌ Search error occurred: {e}")
             return []
     
-    def hybrid_search(self, query: str, k: int = 3, score_threshold: float = 0.75,
+    def hybrid_search(self, query: str, k: int = 3, score_threshold: float = 0.55,
         lambda_mult: float = 0.7 ) -> List[Document]:
         """
         Diverse hybrid search combining similarity with Maximal Marginal Relevance (MMR).
@@ -184,7 +184,7 @@ class MedicalVectorStore:
             
             for doc, score in candidates_with_score:
                 clean_score = round(float(score), 4)
-                doc.metadata["score"] = clean_score  # 👈 Attach score to document metadata
+                doc.metadata["score"] = clean_score  # Attach score to document metadata
                 
                 # Store in lookup map using page content as identifier
                 score_map[doc.page_content] = clean_score
