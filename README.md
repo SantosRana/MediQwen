@@ -338,7 +338,7 @@ python tests/benchmark/evaluate_pipeline.py
 - **`notebooks/01_knowledge_base.ipynb`**: Knowledge base ingestion, BAAI embeddings, ChromaDB indexing, and vector search verification.
 - **`notebooks/02_agent_nodes_validation.ipynb`**: LangGraph agent node validation, multimodal vision triage, web fallbacks, offline safe refusals, and injection blocks.
 - **`notebooks/03_scope_classifier.ipynb`**: BGE scope classifier grid search, threshold tuning ($0.50$ score, $0.05$ margin), and gate analysis.
-- **`notebooks/04_quality_evaluation.ipynb`**: Direct guardrail unit diagnostic checks and execution of the 10-scenario benchmark matrix.
+- **`notebooks/04_quality_evaluation.ipynb`**: Direct guardrail unit diagnostic checks, Risk triage performance, Visual Triage & Multimodal Pipeline Evaluation and execution of the 10-scenario benchmark matrix.
 
 ## 🎯 Production Benchmark Performance
 

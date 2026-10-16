@@ -79,8 +79,11 @@ CLINICAL_INFORMATION_INTENTS = (
     "plan for",
     "guidelines for",
     
-    # Treatment / management
+    # Treatment / management & flexible variants
     "treatment",
+    "treat",
+    "how to treat",
+    "treatment of",
     "what should i do",
     "how should i treat",
     "how is this treated",
@@ -91,11 +94,23 @@ CLINICAL_INFORMATION_INTENTS = (
     "medication options",
     "at home relief",
     "how to cure",
+    "how to manage",
+    "what can i do about",
 
-    # Causes / prevention
+    # Causes / triggers & flexible variants
+    "what causes",
+    "causes of",
+    "possible causes",
+    "what triggered",
+    "possible triggers",
     "what causes this",
     "what are the causes",
     "what are the triggers",
+
+    # Prevention & flexible variants
+    "how to prevent",
+    "prevention of",
+    "prevent this",
     "how can i prevent this",
 
     # Evidence / guidelines
@@ -109,10 +124,14 @@ CLINICAL_INFORMATION_INTENTS = (
     "clinical recommendations",
     "management guidelines",
 
-    # Symptoms / warning signs
+    # Symptoms / warning signs & flexible variants
     "symptoms",
+    "symptoms of",
     "warning signs",
+    "signs of",
+    "signs of complications",
     "what are the warning signs",
+    "when to seek medical attention",
     "when should i seek medical help",
     "when should i see a doctor",
 
@@ -123,6 +142,14 @@ CLINICAL_INFORMATION_INTENTS = (
     "side effects",
     "risks",
 )
+
+# Continuation Patterns (Used in run_dialogue_manager for sameness anchoring)
+CONTINUATION_PATTERNS = [
+    r"\b(same|previous)\s+(condition|rash|symptom|lesion|spot)\b",
+    r"\b(image|photo|picture)\s+of\s+my\s+(?:condition|[a-zA-Z\s]+)\b",
+    r"\bdoes\s+this\s+look\s+(similar|like\s+the\s+same)\b",
+    r"\b(another|additional)\s+(image|photo|picture)\s+of\s+the\s+same\b",
+]
 
 # Trusted Web Domain Scoring for Fallback Search
 TRUSTED_WEB_SOURCES = {

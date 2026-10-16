@@ -94,27 +94,30 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
     # STEP 1.5 — MULTIMODAL EVENT & CONTEXT BOUNDARY EVALUATION
     # =============================================================
     if has_image:
-        # Conservative sameness anchoring (requires explicit noun/phrase linkage)
-        continuation_patterns = [
-            r"\b(same|previous)\s+(condition|rash|symptom|lesion|spot)\b",
-            r"\b(image|photo|picture)\s+of\s+my\s+(" + (re.escape(existing_subject) if existing_subject else "condition") + r")\b",
-            r"\bdoes\s+this\s+look\s+(similar|like\s+the\s+same)\b",
-            r"\b(another|additional)\s+(image|photo|picture)\s+of\s+the\s+same\b",
-        ]
-        
-        is_explicit_continuation = bool(
-            existing_subject and any(re.search(p, query_lower) for p in continuation_patterns)
+        has_clinical_intent = any(
+            phrase in query_lower for phrase in CLINICAL_INFORMATION_INTENTS
         )
+        
+        # Build dynamic subject continuation matcher using imported CONTINUATION_PATTERNS
+        is_explicit_continuation = False
+        if existing_subject:
+            dynamic_continuation_patterns = CONTINUATION_PATTERNS + [
+                r"\b(image|photo|picture)\s+of\s+my\s+" + re.escape(existing_subject) + r"\b"
+            ]
+            is_explicit_continuation = any(
+                re.search(p, query_lower) for p in dynamic_continuation_patterns
+            )
 
         if is_explicit_continuation:
             logger.info("📸 Image attached with explicit continuation -> Preserving subject: '%s'", existing_subject)
             active_subject = existing_subject
         else:
-            logger.info("📸 New image detected without explicit continuation -> Boundary reset (clearing stale subject: '%s')", existing_subject)
-            active_subject = None  # Reset stale subject for fresh visual case
+            logger.info("📸 New image detected -> Clearing stale subject: '%s'", existing_subject)
+            active_subject = None
 
         logger.info(
-            "🩺 Dialogue State: [multimodal_triage] | Scope: MULTIMODAL (MULTIMODAL_IMAGE_OVERRIDE) | Retrieval: False | Subject: %s",
+            "🩺 Dialogue State: [multimodal_triage] | Scope: MULTIMODAL | Retrieval: %s | Subject: %s",
+            has_clinical_intent,
             active_subject,
         )
 
@@ -124,15 +127,17 @@ def run_dialogue_manager(state: AgentState) -> Dict[str, Any]:
             "scope": "MULTIMODAL",
             "scope_source": "MULTIMODAL_IMAGE_OVERRIDE",
             "decision": "HIGH_CONFIDENCE",
-            "requires_retrieval": False,
+            "requires_retrieval": has_clinical_intent,
             "clinical_subject": active_subject,
-            "followup_pending": True,  # Keep multimodal conversation open for clinical follow-up
+            "followup_pending": True,
             "agent_response": "",
             "user_query": user_query,
             "image_path": image_path,
             "processed_image_payload": processed_image_payload,
             "process_image": True,
-            "routing_trace": trace + [f"dialogue_mgr: scope=MULTIMODAL (source=MULTIMODAL_IMAGE_OVERRIDE) | state=multimodal_triage | retrieval=False | subject={active_subject}"],
+            "routing_trace": trace + [
+                f"dialogue_mgr: scope=MULTIMODAL | state=multimodal_triage | retrieval={has_clinical_intent} | subject={active_subject}"
+            ],
         }
 
     # =============================================================
@@ -328,35 +333,58 @@ def run_risk_classification(state: AgentState) -> Dict[str, Any]:
 def run_multimodal_processing(state: AgentState) -> Dict[str, Any]:
     """Node 3: Direct Base64 image payload preparation for Turn 1 visual triage."""
     logger.info("=== [Node: Multimodal Processing] ===")
+    start_time = time.perf_counter()
     
     # Strictly check process_image authorization flag from Dialogue Manager
     if not state.get("process_image", False):
         logger.info("⏩ Skipping image preprocessing (Turn 2+ or text-only turn).")
-        return {"processed_image_payload": None}
+        return {"processed_image_payload": None, "image_proc_latency_ms": 0.0}
 
     image_path = state.get("image_path")
     if not image_path or not Path(image_path).exists():
-        logger.warning(f"⚠️ Target file path missing: {image_path}")
-        return {"image_path": None, "processed_image_payload": None}
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        return {
+            "is_safe": False,
+            "dialog_state": "blocked",
+            "processed_image_payload": None,
+            "agent_response": "I couldn't locate the attached image file. Please re-upload a valid medical image.",
+            "image_proc_latency_ms": elapsed_ms
+        }
         
     try:
         proc_result = image_processor.process(image_path)
+        image_payload = proc_result.image_base64 if proc_result else None
+
+        if not image_payload or not str(image_payload).strip():
+            raise ValueError("Image processor returned an empty payload.")
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        logger.info("⏱️ Image Preprocessing Complete | Latency: %.2f ms", elapsed_ms)
+
         return {
             "image_path": image_path,
-            "processed_image_payload": proc_result.image_base64
+            "processed_image_payload": image_payload,
+            "image_proc_latency_ms": elapsed_ms
         }
     except Exception as e:
-        logger.error(f"❌ Image Preprocessing Node failure: {e}")
-        return {"processed_image_payload": None}
-
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        logger.error("❌ Image preprocessing failed after %.2f ms: %s", elapsed_ms, e)
+        return {
+            "is_safe": False,
+            "dialog_state": "blocked",
+            "processed_image_payload": None,
+            "agent_response": "I couldn't process the attached image. Please re-upload a supported image file.",
+            "image_proc_latency_ms": elapsed_ms
+        }
 
 def run_vector_search(state: AgentState) -> Dict[str, Any]:
     """
     Node 4: Contextual Vector Search.
     Executes ONLY when requires_retrieval == True and resolves query using clinical_subject.
+    Applies query normalization to remove conversational structure while retaining clinical terms.
     """
     logger.info("=== [Node: Local Vector Retrieval] ===")
-    start_time = time.time()
+    start_time = time.perf_counter()
     
     if not state.get("requires_retrieval", False):
         logger.info("ℹ️ requires_retrieval is False. Bypassing vector retrieval.")
@@ -364,37 +392,50 @@ def run_vector_search(state: AgentState) -> Dict[str, Any]:
             "retrieved_context": [],
             "context_sources": [],
             "top_retrieval_distance": 0.0,
-            "retrieval_query": None
+            "retrieval_query": None,
+            "vector_search_latency_ms": 0.0
         }
 
     user_query = state.get("user_query", "").strip()
     clinical_subject = state.get("clinical_subject", "")
 
-    # Contextual Query Resolution: "How is this treated?" -> "urticaria How is this treated?"
-    search_query = f"{clinical_subject} {user_query}".strip() if clinical_subject else user_query
+    # 1. Contextual Query Construction
+    raw_query = f"{clinical_subject} {user_query}".strip() if clinical_subject else user_query
+
+    # 2. Query Normalization Pass (Strips fillers: "What is this...", "what are the...")
+    search_query = normalize_query(raw_query)
     
     search_results = []
     top_distance = 1.0
     
     try:
-        logger.info(f"🔍 Executing Context-Resolved Vector Search: '{search_query}'")
-        search_results = vector_store.hybrid_search(query=search_query, k=3, score_threshold=0.55)
+        logger.info("🔍 Executing Normalized Vector Search | Raw: '%s' -> Clean: '%s'", raw_query, search_query)
+        
+        # Execute hybrid search with strict distance score ceiling (d <= 0.55)
+        search_results = vector_store.hybrid_search(query=search_query, k=3, score_threshold=0.55) or []
+        
         if search_results:
+            # Extract top distance score for logging/metrics
             top_distance = float(search_results[0].metadata.get("score", 0.35))
+            logger.info("📊 Top candidate match distance score: %.4f", top_distance)
+        else:
+            logger.info("ℹ️ Zero candidates cleared the d <= 0.55 score threshold.")
+
     except Exception as e:
-        logger.error(f"❌ Vector search failed: {e}")
+        logger.exception("❌ Local vector search execution failed: %s", e)
 
     retrieved_chunks = [doc.page_content for doc in search_results]
-    sources = list(set(doc.metadata.get("source", "verified_doc") for doc in search_results))
+    sources = list(dict.fromkeys(doc.metadata.get("source", "verified_doc") for doc in search_results))
 
-    elapsed_ms = (time.time() - start_time) * 1000
-    logger.info(f"⏱️ Retrieval Complete. Latency: {elapsed_ms:.2f} ms | Chunks: {len(retrieved_chunks)}")
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info("⏱️ Vector Retrieval Complete | Latency: %.2f ms | Retained Chunks: %d", elapsed_ms, len(retrieved_chunks))
     
     return {
         "retrieved_context": retrieved_chunks,
         "context_sources": sources,
         "retrieval_query": search_query,
-        "top_retrieval_distance": top_distance
+        "top_retrieval_distance": top_distance,
+        "vector_search_latency_ms": elapsed_ms
     }
 
 
@@ -780,6 +821,23 @@ def run_qwen_generation(state: AgentState) -> Dict[str, Any]:
     clinical_subject = state.get("clinical_subject")
 
     subject_str = clinical_subject if clinical_subject else "Unspecified"
+    
+    # Short-Circuit for Authoritative Pre-Populated Responses
+    # -------------------------------------------------------------
+    prepopulated_response = state.get("agent_response")
+    is_affirmation = state.get("is_affirmation_response", False)
+
+    if prepopulated_response and (dialog_state == "blocked" or is_affirmation):
+        logger.info(
+            "🛑 Preserving pre-populated authoritative response; skipping Ollama generation."
+        )
+        return {
+            "agent_response": prepopulated_response,
+            "clinical_subject": clinical_subject,
+            "generation_success": True,
+            "generation_error": None,
+            "generation_latency_ms": 0.0,
+        }
 
     # -------------------------------------------------------------
     # 2. Defensive Evidence Invariant
@@ -898,25 +956,20 @@ System safety, risk classification, routing decisions, and guardrails are author
 
     # -------------------------------------------------------------
     # 8. Build Ollama Chat Payload
-    # -------------------------------------------------------------
+    # Allow larger output buffers for visual triage and emergency escalations
+    max_tokens = 768 if (dialog_state == "multimodal_triage" or risk_tier == "EMERGENCY") else 512
+
     payload = {
         "model": MODEL_ID,
         "messages": [
-            {
-                "role": "system",
-                "content": system_instruction,
-            },
-            {
-                "role": "user",
-                "content": user_query,
-            },
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_query},
         ],
-        # Disable Qwen3.5 reasoning trace generation
         "think": False,
         "options": {
             "temperature": 0.2,
             "num_ctx": 4096,
-            "num_predict": 512,
+            "num_predict": max_tokens, # 👈 Prevents truncation on detailed visual/emergency turns
         },
         "stream": False,
     }
