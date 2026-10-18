@@ -45,3 +45,8 @@ class AgentState(TypedDict):
     vector_search_latency_ms: float   # Hybrid search duration
     generation_latency_ms: float      # Ollama /api/chat execution time
     total_graph_latency_ms: float     # Total end-to-end graph execution time
+    
+    # 🆕 Stage 1 Multimodal Subject Extraction Fields
+    tentative_subject: Optional[str]
+    subject_confidence: Optional[str]
+    visual_extraction_latency_ms: Optional[float]

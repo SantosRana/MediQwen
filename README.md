@@ -58,38 +58,37 @@ Unlike conventional chatbot pipelines, MediQwen combines deterministic state tra
 
 ```mermaid
 flowchart TD
-    A[User Input<br/> Text / Image] --> B[1. Dialogue Manager FSM & Guardrails]
-    
-    B -->|Injection / Code / Unsafe| R[Safe Refusal Node<br/>Bypasses LLM ~0.01s]
-    B -->|Safe Input| SC[2. Scope Classifier Gate<br/>BGE Vector Similarity]
-    
-    SC -->|OUT_OF_SCOPE / Tech| R
-    SC -->|MEDICAL / NUTRITION / CASUAL| C[3. Risk Classifier Node]
-    
-    C -->|Peak Risk = EMERGENCY| E[4. Emergency Priority Override<br/>Prepends Urgent Guidance]
-    C -->|Peak Risk = LOW / MEDIUM / HIGH| M[5. Multimodal Processor Node]
-    E -->|State Update| M
-    
-    M -->|Has Image| P[Image Preprocessing Engine]
-    M -->|Text Only| V[6. Local Vector RAG Node<br/>BAAI/bge-large-en-v1.5]
-    P --> V
-    
-    V -->|Context Found| G[7. MediQwen Generator Node<br/>Local Ollama]
-    V -->|DB Miss & Online Mode| W[Web Scraper Fallback<br/>NHS / Healthline]
-    V -->|DB Miss & Offline Mode| SR[Offline Safe Refusal Node]
-    
-    W -->|Scrape & Embed| CH[ChromaDB Local Cache]
-    CH --> G
-    
-    G --> O[Streamlit UI / FastAPI Response]
-    SR --> O
+    A[User Input: Text or Text + Image] --> B[1. Dialogue Manager FSM + Shared Guardrails]
+    B -->|Unsafe / Blocked| R[Safe Refusal Node]
+    B -->|Safe Input| D{Image Provided?}
 
-    style R fill:#ffcccc,stroke:#ff0000,color:#000
-    style SR fill:#fff3cd,stroke:#ffebaa,color:#000
-    style E fill:#ff9999,stroke:#cc0000,color:#000
-    style G fill:#d4edda,stroke:#28a745,color:#000
-    style O fill:#cce5ff,stroke:#004085,color:#000
-    style CH fill:#e2e3e5,stroke:#383d41,color:#000
+    D -->|Yes| M[Multimodal Triage Branch]
+    D -->|No| S[BGE Scope Classification + Context Resolution]
+
+    S -->|OUT_OF_SCOPE / Blocked| R
+    S -->|CASUAL / No Retrieval Needed| G[Generator: Local Ollama]
+    S -->|MEDICAL / NUTRITION / Retrieval Needed| C[Risk Classifier]
+    M --> C
+
+    C --> E{Emergency Risk?}
+    E -->|Yes| EG[Preserve Emergency Guidance]
+    E -->|No| P[Image Preprocessing: Resize + PNG/Base64]
+    EG --> P
+
+    P --> Q{Image Guidance Needs Retrieval?}
+    Q -->|Yes| X[Visual Subject Extractor]
+    Q -->|No| G
+
+    X --> V[Local Vector Retriever]
+    C -->|Text Retrieval Needed| V
+
+    V -->|Relevant Local Context| G
+    V -->|Insufficient Context + Online| W[Trusted Web Search Fallback]
+    V -->|Insufficient Context + Offline| F[Offline Fallback / Safe Refusal]
+    W --> G
+    G --> O[Streamlit UI / FastAPI Response]
+    R --> O
+    F --> O
 ```
 
 ---
@@ -98,25 +97,32 @@ flowchart TD
 
 ## 1. Dialogue Manager FSM & Safety Check
 
-Every user message first passes through the Dialogue Manager, which acts as the system’s traffic controller. It uses a Finite State Machine (FSM) to determine whether the request is casual conversation, a medical question, nutrition guidance, or an image-based medical request.
+Every user message first passes through the Dialogue Manager. Shared guardrails validate the input before the workflow branches:
 
-Potential prompt injections and other malicious inputs are blocked immediately by deterministic guardrails, before any LLM is called. Safe requests continue through the appropriate clinical processing pipeline.
+- **Unsafe or blocked input:** route to the safe-refusal path without retrieval or normal generation.
+- **Image provided:** enter the multimodal triage branch. This branch uses configured clinical-information intent checks and does not run the text-only BGE scope classifier.
+- **Text only:** continue to BGE scope classification and dialogue-context resolution.
+
+This separation keeps image interpretation on a dedicated path while text-only requests use semantic scope classification. Emergency handling must remain a priority and must not depend on successful visual extraction or retrieval.
+
 
 ---
 
 ## 2. BGE Scope Classification & Decision Gate
 
-Safe inputs pass to the **`BGEScopeClassifier`**, which calculates cosine similarity against prototype intent vectors:
+For safe **text-only** requests, the `BGEScopeClassifier` calculates cosine similarity against prototype intent vectors and resolves the result using dialogue context:
 
-- **High-Confidence Gate:** High score & margin $\rightarrow$ Assigns **`MEDICAL`**, **`NUTRITION`**, **`CASUAL`**, or **`OUT_OF_SCOPE`**.
-- **Anaphora Context Override:** Low margin or ambiguous query (e.g., *"How can we treat it?"*) with an active **`clinical_subject`** $\rightarrow$ Resolves context and routes as **`MEDICAL`**.
-- **Technical Intercept Rule:** Technical or code requests override active clinical context to prevent domain misuse.
+- **Scope labels:** `MEDICAL`, `NUTRITION`, `CASUAL`, or `OUT_OF_SCOPE`.
+- **Context resolution:** ambiguous follow-up questions can use an active `clinical_subject` to resolve references such as *"How can we treat it?"*.
+- **Technical intercept:** technical or code requests should override stale clinical context.
+
+Image-containing requests follow the dedicated multimodal branch instead of passing through this BGE scope-classification step. The shared guardrails still run first.
 
 ---
 
 ## 3. Clinical Risk Assessment
 
-Medical questions are classified into risk levels(EMERGENCY, MEDIUM, or LOW).
+The risk classifier assigns risk levels such as `EMERGENCY`, `HIGH`, `MEDIUM`, and `LOW`.
 
 - Informational Query ("What is a rash?")         ──► LOW Risk
 - Active Self-Report ("I have a rash")            ──► MEDIUM Risk
@@ -129,14 +135,16 @@ Emergency-risk cases automatically prepend emergency guidance to the generated r
 
 ## 4. Multimodal Processing
 
-If an image is provided:
+When an image is provided, the request follows the multimodal branch after the shared guardrail check.
 
-- Image normalization
-- Adaptive resizing
-- Base64 encoding
-- Vision-language preparation
+- Normalize and resize the image while preserving its aspect ratio.
+- Prepare a PNG/Base64 payload for the local vision-language model.
+- If the user asks for clinical guidance that requires retrieval, run the **Visual Subject Extractor** before retrieval.
+- The extractor produces a *tentative* short description of a visible finding and a confidence level; it must not present an image-based diagnosis as confirmed.
+- If extraction is uncertain or fails, the system should not invent a subject. Retrieval should fall back to the original user query where appropriate.
+- If the image request does not require retrieval, route directly to response generation for cautious visual observations.
 
-The processed image is then supplied directly to the local multimodal model.
+The visual subject is a retrieval aid, not a diagnosis. The final response should communicate uncertainty and recommend professional assessment when appropriate.
 
 ---
 
@@ -147,19 +155,22 @@ The system searches its local medical knowledge base before using online resourc
 1. Medical documents are converted into structured Markdown for better semantic chunking
 2. Uses BAAI/bge-large-en-v1.5 embeddings with a local ChromaDB vector database
 3. Retrieves the most relevant context while filtering out low-quality matches
+For image-based clinical guidance, visual subject extraction runs before retrieval so the search can be more specific. If no reliable subject is extracted, the original user query remains the fallback rather than an invented label.
 
 ---
 
-## 5. Intelligent Web Fallback
+## 6. Intelligent Web Fallback
 
-If relevant information is not found locally, MediQwen retrieves trusted online medical content.
+When local retrieval does not provide sufficient relevant evidence:
 
-- Searches only verified sources such as NHS, WHO, Mayo Clinic etc
-- Cleans and caches retrieved content locally for future request
+- **Online mode:** MediQwen may search configured trusted medical sources, such as NHS, WHO, or Mayo Clinic, subject to the project's source allowlist.
+- **Offline mode:** no web search is attempted. If the local knowledge base is insufficient, the system returns an explicit fallback message rather than fabricating evidence.
+- Retrieved online content may be cleaned and cached locally for later use.
 
+Online retrieval can involve sending a search request to an external source. Use online mode only when that external access is acceptable.
 
 ---
-## 6. Response Generation
+## 7. Response Generation
 
 The final response combines the user's query, clinical images (if provided), retrieved medical knowledge, and risk assessment.
 

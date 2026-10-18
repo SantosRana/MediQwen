@@ -377,6 +377,202 @@ def run_multimodal_processing(state: AgentState) -> Dict[str, Any]:
             "image_proc_latency_ms": elapsed_ms
         }
 
+# In src/agent/nodes.py
+
+def run_visual_subject_extraction(state: AgentState) -> Dict[str, Any]:
+    """Extract a tentative visual subject before clinical retrieval (Stage 1 Pass).
+
+    This node executes a lightweight, fast visual inspection pass (num_predict=128)
+    using the Qwen Vision model to identify key visual features from uploaded images.
+    It operates under strict safety guardrails:
+    1. Describes visible features using 1-3 words of observational language.
+    2. Explicitly avoids confirming diagnostic labels or inferring diseases.
+    3. Handles non-medical or ambiguous images safely by returning `None` for the 
+       clinical subject, allowing downstream retrieval to fall back cleanly to 
+       the user's text query.
+
+    Args:
+        state (AgentState): The active LangGraph workflow state containing:
+            - requires_retrieval (bool): Authorization flag for evidence grounding.
+            - dialog_state (str): Current FSM state (must be "multimodal_triage").
+            - processed_image_payload (str): Base64-encoded image string.
+
+    Returns:
+        Dict[str, Any]: State update dictionary containing:
+            - tentative_subject (Optional[str]): Cleaned observational term or None.
+            - subject_confidence (str): "high", "medium", or "low".
+            - clinical_subject (Optional[str]): Preserved subject key for vector search.
+            - visual_extraction_latency_ms (float): Execution duration in milliseconds.
+    """
+    logger.info("=== [Node: Visual Subject Extraction (Stage 1)] ===")
+
+    # ------------------------------------------------------------------
+    # 1. Guard Clause: Skip visual extraction if conditions are not met
+    # ------------------------------------------------------------------
+    if (
+        not state.get("requires_retrieval", False)
+        or state.get("dialog_state") != "multimodal_triage"
+        or not state.get("processed_image_payload")
+    ):
+        logger.info("⏩ Skipping visual subject extraction (non-guidance turn or missing payload).")
+        return {}
+
+    # Extract and clean the Base64 image payload (strips 'data:image/...;base64,' prefix if present)
+    image_payload = state["processed_image_payload"]
+    clean_base64 = (
+        str(image_payload).split("base64,", 1)[-1]
+        if "base64," in str(image_payload)
+        else str(image_payload)
+    )
+
+    # ------------------------------------------------------------------
+    # 2. System & User Prompts (Observational Language & Scope Limits)
+    # ------------------------------------------------------------------
+    prompt = """
+Analyze the image cautiously to identify a tentative visible finding
+relevant to the user's clinical question.
+
+Rules:
+1. Do not provide a confirmed diagnosis.
+2. If the image is clearly non-medical, return "non_medical".
+3. If a possible medical finding cannot be identified reliably, return "uncertain".
+4. If a clear clinical or dermatological finding is visible, summarize it in 1-3 words (e.g., "acne vulgaris", "skin rash", "erythema" or "visible swelling").
+5. Do not infer a disease solely from an image.
+6. Return only a valid JSON object in this format:
+{
+  "tentative_subject": "short finding, uncertain, or non_medical",
+  "confidence": "high, medium, or low"
+}
+"""
+
+    payload = {
+        "model": MODEL_ID,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You cautiously describe visible image findings. "
+                    "Never claim a confirmed diagnosis. "
+                    "Return valid JSON only."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [clean_base64],
+            },
+        ],
+        "think": False,
+        "options": {
+            "temperature": 0.1,    # Low temperature for deterministic JSON output
+            "num_predict": 128,     # Low token budget for fast Stage 1 pass (~1.2s)
+        },
+        "stream": False,
+    }
+
+    start = time.perf_counter()
+
+    try:
+        # ------------------------------------------------------------------
+        # 3. Ollama API Chat Post Request with Read Timeout
+        # ------------------------------------------------------------------
+        response = requests.post(
+            "http://localhost:11434/api/chat",
+            json=payload,
+            timeout=(10, 60),  # (connect_timeout=10s, read_timeout=60s)
+        )
+        response.raise_for_status()
+
+        raw = response.json().get("message", {}).get("content", "").strip()
+        if not raw:
+            raise ValueError("Empty response from visual model.")
+
+        # ------------------------------------------------------------------
+        # 4. Dual-Stage Resilient JSON Parsing
+        # ------------------------------------------------------------------
+        # Pass 1: Clean out Markdown code fences (e.g., ```json ... ```)
+        cleaned = re.sub(
+            r"\A```(?:json)?\s*|\s*```\Z",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Pass 2: Fallback regex to extract JSON object embedded in conversational text
+            match = re.search(r"\{[\s\S]*\}", cleaned)
+            if not match:
+                raise ValueError("No valid JSON object structure found in model output.")
+            parsed = json.loads(match.group(0))
+
+        if not isinstance(parsed, dict):
+            raise ValueError("Parsed model response is not a valid JSON dictionary.")
+
+        # ------------------------------------------------------------------
+        # 5. Extract & Normalize Subject & Confidence Values
+        # ------------------------------------------------------------------
+        subject = parsed.get("tentative_subject")
+        confidence = str(parsed.get("confidence", "low")).lower().strip()
+
+        if not isinstance(subject, str) or not subject.strip():
+            raise ValueError("Field 'tentative_subject' is missing or empty in JSON.")
+
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "low"
+
+        subject = subject.strip().lower()
+
+        # ------------------------------------------------------------------
+        # 6. Scope Boundary Normalization (Non-Medical / Uncertain Images)
+        # ------------------------------------------------------------------
+        if subject in {
+            "uncertain",
+            "non_medical",
+            "non-medical",
+            "none",
+        }:
+            logger.info("ℹ️ Stage 1 Extractor identified a non-medical or uncertain image.")
+            # Normalizing to None allows vector_search() to fall back to the user query
+            subject = None
+            confidence = "low"
+
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        logger.info(
+            "✅ Stage 1 Visual Extraction Complete | subject='%s' | "
+            "confidence='%s' | latency=%.1f ms",
+            subject,
+            confidence,
+            latency_ms,
+        )
+
+        return {
+            "tentative_subject": subject,
+            "subject_confidence": confidence,
+            "clinical_subject": subject,
+            "visual_extraction_latency_ms": latency_ms,
+        }
+
+    except (
+        requests.RequestException,
+        ValueError,
+        TypeError,
+        AttributeError,
+    ) as err:
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        logger.warning("⚠️ Visual extraction failed safely: %s", err)
+
+        # Defensive Fallback: Never invent or hallucinate a subject on error
+        return {
+            "tentative_subject": None,
+            "subject_confidence": "low",
+            "clinical_subject": None,
+            "visual_extraction_latency_ms": latency_ms,
+        }
+        
 def run_vector_search(state: AgentState) -> Dict[str, Any]:
     """
     Node 4: Contextual Vector Search.
@@ -397,13 +593,35 @@ def run_vector_search(state: AgentState) -> Dict[str, Any]:
         }
 
     user_query = state.get("user_query", "").strip()
-    clinical_subject = state.get("clinical_subject", "")
+    clinical_subject = (
+        state.get("clinical_subject")
+        or state.get("tentative_subject")
+    )
 
-    # 1. Contextual Query Construction
-    raw_query = f"{clinical_subject} {user_query}".strip() if clinical_subject else user_query
+    query_lower = user_query.lower()
 
-    # 2. Query Normalization Pass (Strips fillers: "What is this...", "what are the...")
+    # Intent-expanded query construction
+    if clinical_subject:
+        if any(k in query_lower for k in ("treatment", "treat", "cure", "management", "relief")):
+            raw_query = f"{clinical_subject} treatment and management"
+
+        elif any(k in query_lower for k in ("cause", "causes", "why", "trigger", "triggers")):
+            raw_query = f"{clinical_subject} causes and triggers"
+
+        elif any(k in query_lower for k in ("symptom", "symptoms", "signs", "warning signs")):
+            raw_query = f"{clinical_subject} symptoms and warning signs"
+
+        elif any(k in query_lower for k in ("prevent", "prevention", "avoid")):
+            raw_query = f"{clinical_subject} prevention"
+
+        else:
+            raw_query = f"{clinical_subject} {user_query}"
+    else:
+        # Extraction failed: retain original user intent
+        raw_query = user_query
+
     search_query = normalize_query(raw_query)
+    logger.info("Targeted RAG query: '%s'", search_query)
     
     search_results = []
     top_distance = 1.0

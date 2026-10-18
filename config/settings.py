@@ -69,15 +69,22 @@ AFFIRMATION_EXPRESSIONS = {
 
 # Intents that route toward clinical information requests and trigger deferred RAG
 CLINICAL_INFORMATION_INTENTS = (
-    # Direct imperative / request phrases
-    "give me",
-    "give me a",
-    "provide",
-    "show me",
-    "recommend",
-    "diet for",
-    "plan for",
-    "guidelines for",
+    # --- Standalone / Single Keyword Triggers ---
+    "cure",
+    "cures",
+    "preventive",
+    "preventive measures",
+    "remedy",
+    "remedies",
+    "treatment",
+    "treatments",
+    "symptom",
+    "symptoms",
+    "cause",
+    "causes",
+    "trigger",
+    "triggers",
+    "prevention",
     
     # Treatment / management & flexible variants
     "treatment",

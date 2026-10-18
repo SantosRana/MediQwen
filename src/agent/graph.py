@@ -15,7 +15,8 @@ from src.agent.nodes import (
     run_vector_search, 
     run_web_search_tool,
     safe_refusal_node,
-    run_qwen_generation
+    run_qwen_generation,
+    run_visual_subject_extraction
 )
 
 logger = logging.getLogger("graph_orchestrator")
@@ -31,7 +32,7 @@ workflow.add_node("retriever", run_vector_search)
 workflow.add_node("web_search_tool", run_web_search_tool)
 workflow.add_node("safe_refusal_node", safe_refusal_node)
 workflow.add_node("generator", run_qwen_generation)
-
+workflow.add_node("visual_subject_extractor", run_visual_subject_extraction)
 
 # =======================================================================
 # 🌐 CONDITIONAL ROUTING FUNCTIONS
@@ -68,6 +69,38 @@ def dialogue_fsm_switchboard(state: AgentState) -> str:
     logger.warning(
         f"⚠️ Unknown dialogue state [{active_state.upper()}]. Defaulting to Generator."
     )
+    return "generator"
+
+def post_classification_router(state: AgentState) -> str:
+    """
+    Routes after the classifier.
+
+    - Image + clinical guidance -> visual subject extraction
+    - Image without retrieval intent -> generator
+    - Text requiring retrieval -> retriever
+    - Non-retrieval conversation -> generator
+    """
+    dialog_state = state.get("dialog_state")
+    requires_retrieval = state.get("requires_retrieval", False)
+    has_image = bool(state.get("processed_image_payload"))
+
+    if dialog_state == "multimodal_triage":
+        if has_image and requires_retrieval:
+            logger.info(
+                "📸 Image-based clinical guidance -> Visual Subject Extractor"
+            )
+            return "visual_subject_extractor"
+
+        logger.info(
+            "🖼️ Image-based observation -> Generator"
+        )
+        return "generator"
+
+    if requires_retrieval:
+        logger.info("🔎 Retrieval required -> Retriever")
+        return "retriever"
+
+    logger.info("💬 Retrieval not required -> Generator")
     return "generator"
 
 
@@ -147,10 +180,10 @@ def web_search_validation_router(state: AgentState) -> str:
 # =======================================================================
 # 🔗 GRAPH EDGE BINDINGS
 # =======================================================================
-
+# 1. Mandatory Graph Entrypoint Edge
 workflow.add_edge(START, "dialogue_manager")
 
-# 1. Master FSM Switchboard Edge Routing
+# 2. Master FSM Switchboard Edge Routing
 workflow.add_conditional_edges(
     "dialogue_manager",
     dialogue_fsm_switchboard,
@@ -163,7 +196,19 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_edge("multimodal_processor", "classifier")
-workflow.add_edge("classifier", "retriever")
+
+# 3. Post-Classification Conditional Routing
+workflow.add_conditional_edges(
+    "classifier",
+    post_classification_router,
+    {
+        "visual_subject_extractor": "visual_subject_extractor",
+        "retriever": "retriever",
+        "generator": "generator",
+    }
+)
+
+workflow.add_edge("visual_subject_extractor", "retriever")
 
 # 4. Retriever Exit Conditional Edge Routing
 workflow.add_conditional_edges(
@@ -172,7 +217,7 @@ workflow.add_conditional_edges(
     {
         "generator": "generator",
         "web_search_tool": "web_search_tool",
-        "safe_refusal_node": "safe_refusal_node"
+        "safe_refusal_node": "safe_refusal_node",
     }
 )
 
@@ -182,7 +227,7 @@ workflow.add_conditional_edges(
     web_search_validation_router,
     {
         "generator": "generator",
-        "safe_refusal_node": "safe_refusal_node"
+        "safe_refusal_node": "safe_refusal_node",
     }
 )
 

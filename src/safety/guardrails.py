@@ -16,7 +16,7 @@ risk classification, and agent orchestration.
 
 import logging
 import re
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger("guardrails")
 
@@ -24,152 +24,14 @@ logger = logging.getLogger("guardrails")
 class Guardrails:
     """
     Safety boundary for MediQwen.
-    This class intentionally does NOT manage:
-        - LangGraph routing
-        - RAG retrieval
-        - Web search
-        - Dialogue state
-        - Full risk classification
-
-    It only validates safety, detects urgent signals,
-    and determines whether input is within MediQwen's scope.
+    Validates input/output safety without interfering with BGE scope classification
+    or LangGraph FSM routing.
     """
-
-    # =======================================================================
-    # 1. MEDICAL TAXONOMY
-    # =======================================================================
-
-    BODY_PARTS: Set[str] = {
-        "heart", "stomach", "skin", "brain", "chest", "arm",
-        "neck", "jaw", "back", "liver", "kidney", "lung",
-        "head", "eye", "throat", "bone", "abdomen", "belly",
-        "shoulder", "elbow", "wrist", "hand", "finger", "thumb",
-        "hip", "pelvis", "groin", "knee", "ankle", "foot",
-        "toe", "ear", "nose", "mouth", "tongue", "teeth",
-        "gums", "cheek", "scalp", "spine", "breast", "joint",
-        "muscle", "nerve", "vein", "artery", "tonsil", "sinus",
-        "bladder", "colon", "bowel", "rectum", "rib", "skull"
-    }
-
-    SYMPTOMS: Set[str] = {
-        "pain", "symptom", "ache", "cough", "fever", "rash",
-        "bleed", "bleeding", "swelling", "hurt", "injury",
-        "cramp", "nausea", "vomiting", "dizzy", "dizziness",
-        "fatigue", "tired", "weakness", "numbness", "tingling",
-        "diarrhea", "constipation", "chills", "sweating",
-        "fainting", "passed out", "palpitations",
-        "shortness of breath", "wheezing", "sneezing",
-        "runny nose", "congestion", "itching", "burning",
-        "loss of appetite", "weight loss", "weight gain",
-        "insomnia", "confusion", "memory loss", "sore", "stiff",
-        "spasm", "discharge", "lump", "bump", "blister",
-        "bruise", "redness", "inflammation", "acne",
-        "pimples", "breakout", "blackheads", "ulcer",
-        "lesion", "tightness", "pressure", "crushing",
-        "numb", "weak", "exhaustion", "light headed", "cold", "colds", "flu", "infection", "allergy", "allergic reaction",
-        "turning blue", "blue", "red", "yellow", "pale", "sweaty", "clammy", "chest tightness", "headache",
-        "migraine", "blurred vision", "double vision", "vision loss", "hearing loss", "ringing in ears"
-    }
-
-    MEDICATIONS: Set[str] = {
-        "medicine", "pill", "drug", "dose", "treatment",
-        "cure", "vaccine", "antibiotic", "aspirin",
-        "paracetamol", "ibuprofen", "insulin",
-        "acetaminophen", "advil", "tylenol", "motrin",
-        "prescription", "meds", "ointment", "cream",
-        "drops", "syrup"
-    }
-
-    CLINICAL_CONCEPTS: Set[str] = {
-        "doctor", "hospital", "disease", "condition",
-        "illness", "sick", "clinical", "virus", "infection",
-        "angina", "hives", "ecg", "ekg", "mri", "ct scan",
-        "xray", "ultrasound", "blood test", "lab",
-        "clinic", "nurse", "physician", "pediatrician"
-    }
-
-    MENTAL_HEALTH: Set[str] = {
-        "mental", "stress", "anxiety", "depression",
-        "ptsd", "autism", "adhd", "bipolar", "trauma",
-        "therapy", "psychology", "panic", "insomnia",
-        "hallucination", "delusion"
-    }
-
-    MEDICAL_EDUCATION_TERMS: Set[str] = {
-        "hypertension", "diabetes", "asthma", "cancer",
-        "stroke", "immune system", "vaccination",
-        "vaccinated", "allergy", "allergies", "cholesterol",
-        "blood pressure", "glucose", "arthritis", "migraine",
-        "influenza", "flu", "pneumonia", "bronchitis"
-    }
-
-    # Preserved for backwards compatibility
-    MEDICAL_HEALTH_KEYWORDS: Set[str] = (
-        BODY_PARTS
-        | SYMPTOMS
-        | MEDICATIONS
-        | CLINICAL_CONCEPTS
-        | MENTAL_HEALTH
-        | MEDICAL_EDUCATION_TERMS
-    )
-
-    NUTRITION_KEYWORDS: Set[str] = {
-        "diet", "nutrition", "food", "foods", "meal",
-        "calories", "protein", "carbohydrate", "carbs",
-        "fat", "fiber", "vitamin", "minerals",
-        "healthy eating", "weight management",
-        "heart healthy", "nutrition plan"
-    }
-
-    CONVERSATIONAL_KEYWORDS: Set[str] = {
-        "hello", "hi", "hey", "hy", "good morning",
-        "good afternoon", "good evening", "greetings",
-        "yo", "sup", "thanks", "thank you", "bye",
-        "goodbye", "how are you"
-    }
-
-    CAPABILITY_KEYWORDS: Set[str] = {
-        "how can you help me",
-        "how can you assist me",
-        "what can you do",
-        "who are you",
-        "your name",
-        "capabilities",
-        "capability",
-        "assistant",
-        "ai"
-    }
-
-    VAGUE_VISUAL_QUERIES: Set[str] = {
-        "what is this",
-        "what's this",
-        "what could this be",
-        "what is that",
-        "what's that",
-        "identify this",
-        "identify it",
-        "can you identify this",
-        "is this normal",
-        "does this look normal",
-        "what happened",
-        "what happened here",
-        "help",
-        "help me",
-        "thoughts",
-        "any thoughts",
-        "can you look at this",
-        "can you check this",
-        "what do you think"
-    }
-
-    # =======================================================================
-    # 2. SECURITY BOUNDARY
-    # =====================================================================
+    
+    # 1. SECURITY BOUNDARY
 
     PROMPT_INJECTIONS: List[str] = [
-    # -----------------------------------------------------------------------
     # 1. Direct instruction override
-    # -----------------------------------------------------------------------
     r"\bignore\s+(?:all\s+)?(?:the\s+)?"
     r"(?:previous|prior|above|earlier|system|developer)\s+"
     r"(?:instructions?|rules?|directives?|constraints?|guidelines?)\b",
@@ -190,9 +52,7 @@ class Guardrails:
     r"(?:system|developer|safety)\s+"
     r"(?:instructions?|rules?|policies?|guidelines?)\b",
 
-    # -----------------------------------------------------------------------
     # 2. Explicit system/developer prompt extraction
-    # -----------------------------------------------------------------------
     r"\b(?:reveal|show|display|print|output|provide|give)\s+"
     r"(?:me\s+)?(?:your\s+)?"
     r"(?:system|developer|hidden|internal)\s+"
@@ -211,9 +71,7 @@ class Guardrails:
     r"(?:your\s+)?(?:system|developer|hidden|internal)\s+"
     r"(?:prompt|instructions?|message)\b",
 
-    # -----------------------------------------------------------------------
     # 3. Hidden context / internal data extraction
-    # -----------------------------------------------------------------------
     r"\b(?:reveal|show|print|output|dump|expose)\s+"
     r"(?:your\s+)?(?:hidden|internal|private|secret)\s+"
     r"(?:context|instructions?|message|configuration|config|rules?)\b",
@@ -227,9 +85,7 @@ class Guardrails:
     r"(?:before|above)\s+(?:my\s+)?"
     r"(?:message|question|request)\b",
 
-    # -----------------------------------------------------------------------
     # 4. Instruction hierarchy manipulation
-    # -----------------------------------------------------------------------
     r"\b(?:system|developer|assistant|user)\s+message\s+"
     r"(?:override|replacement|replacement\s+instructions?)\b",
 
@@ -247,9 +103,7 @@ class Guardrails:
     r"(?:the\s+)?(?:system|developer)\s+"
     r"(?:said|instructed|commanded)\b",
 
-    # -----------------------------------------------------------------------
     # 5. Role / identity manipulation
-    # -----------------------------------------------------------------------
     r"\b(?:you\s+are\s+now|from\s+now\s+on\s+you\s+are|"
     r"your\s+new\s+role\s+is)\b",
 
@@ -265,9 +119,7 @@ class Guardrails:
 
     r"\b(?:DAN|dan)\s+(?:mode|protocol|prompt)\b",
 
-    # -----------------------------------------------------------------------
     # 6. Safety-policy bypass
-    # -----------------------------------------------------------------------
     r"\b(?:bypass|circumvent|disable|remove|ignore|evade)\s+"
     r"(?:the\s+)?"
     r"(?:safety|security|content|moderation|guardrail|guardrails)\s+"
@@ -285,9 +137,7 @@ class Guardrails:
     r"(?:safety|security)\s+"
     r"(?:rules?|protocols?|restrictions?|guidelines?)\b",
 
-    # -----------------------------------------------------------------------
     # 7. Jailbreak terminology
-    # -----------------------------------------------------------------------
     r"\b(?:jailbreak|jailbroken|uncensored|unfiltered|unrestricted)\s+"
     r"(?:mode|model|assistant|chatbot|response)\b",
 
@@ -298,9 +148,7 @@ class Guardrails:
     r"\b(?:no|without)\s+(?:safety|content|moderation|"
     r"guardrail|guardrails)\s+(?:restrictions?|filters?|rules?)\b",
 
-    # -----------------------------------------------------------------------
     # 8. Chain-of-thought / hidden reasoning extraction
-    # -----------------------------------------------------------------------
     r"\b(?:reveal|show|print|output|provide|give)\s+"
     r"(?:your\s+)?"
     r"(?:chain\s+of\s+thought|chain-of-thought|"
@@ -314,9 +162,7 @@ class Guardrails:
     r"(?:your\s+)?(?:private|hidden|internal)\s+"
     r"(?:reasoning|thought\s+process)\b",
 
-    # -----------------------------------------------------------------------
     # 9. Prompt reconstruction / extraction techniques
-    # -----------------------------------------------------------------------
     r"\b(?:reconstruct|recover|extract|retrieve)\s+"
     r"(?:your\s+)?(?:system|developer|hidden|internal)\s+"
     r"(?:prompt|instructions?|message|context)\b",
@@ -329,9 +175,7 @@ class Guardrails:
     r"(?:your\s+)?(?:original|initial|hidden|system|developer)\s+"
     r"(?:prompt|instructions?|rules?)\b",
 
-    # -----------------------------------------------------------------------
     # 10. Explicit instruction to expose policy/rules
-    # -----------------------------------------------------------------------
     r"\b(?:list|enumerate|print|show|reveal)\s+"
     r"(?:all\s+)?(?:your\s+)?"
     r"(?:safety|security|moderation|guardrail|guardrails)\s+"
@@ -342,18 +186,14 @@ class Guardrails:
     r"(?:safety|moderation|guardrail|guardrails)\s+"
     r"(?:works|rules?|filters?)\b",
 
-    # -----------------------------------------------------------------------
     # 11. Common instruction-injection phrasing
-    # -----------------------------------------------------------------------
     r"\b(?:new|updated|replacement)\s+instructions?\s*:",
     r"\b(?:system|developer)\s+prompt\s*:",
     r"\b(?:system|developer)\s+message\s*:",
     r"\b(?:assistant|model)\s+instructions?\s*:",
 ]
 
-    # =======================================================================
-    # 3. SELF-HARM / CRISIS DETECTION
-    # =======================================================================
+    # 2. SELF-HARM / CRISIS DETECTION
 
     SELF_HARM_PATTERNS: List[str] = [
         r"\bhow\s+(do|can)\s+i\s+(commit|attempt)\s+suicide\b",
@@ -369,10 +209,7 @@ class Guardrails:
         r"\bkill\s+myself\b"
     ]
 
-    # =======================================================================
-    # 4. RESTRICTED / DANGEROUS REQUESTS
-    # =======================================================================
-
+    # 3. RESTRICTED / DANGEROUS REQUESTS
     RESTRICTED_TOPICS: List[str] = [
         r"how\s+to\s+(make|create|synthesize|manufacture)\s+(drugs|meth|cocaine|heroin)",
         r"how\s+to\s+(harm|hurt|kill)\s+(someone|another\s+person)",
@@ -382,10 +219,7 @@ class Guardrails:
         r"(poison|toxic)\s+(recipe|how\s+to\s+make)"
     ]
 
-    # =======================================================================
-    # 5. EMERGENCY DETECTION
-    # =======================================================================
-
+    # 4. EMERGENCY DETECTION
     EMERGENCY_RULES: Dict[str, List[str]] = {
         "cardiac": [
             r"\b(chest|heart)\b.*\b(pain|hurt|ache|crushing|pressure|tightness|tight)\b",
@@ -434,10 +268,7 @@ class Guardrails:
         ]
     }
 
-    # =======================================================================
-    # 6. TECHNICAL / CODE INTERCEPT PATTERNS
-    # =======================================================================
-
+    # 5. TECHNICAL / CODE INTERCEPT PATTERNS
     CODE_PATTERNS: List[str] = [
     # 1. Explicit fenced code blocks
     r"```[\s\S]*?```",
@@ -497,10 +328,7 @@ class Guardrails:
     r"\b(?:IDE|compiler|interpreter|runtime|package\s+manager|virtual\s+environment|dependency|repository|commit|branch)\b"
 ]
     
-    # =======================================================================
-    # 7. OUTPUT SAFETY
-    # =======================================================================
-
+    # 6. OUTPUT SAFETY
     DISCLAIMER_MARKER = "Clinical Communication Boundary Notice"
 
     DISCLAIMER = (
@@ -536,192 +364,71 @@ class Guardrails:
         )
     ]
 
-    # =======================================================================
-    # 8. PRE-COMPILED REGEX
-    # =======================================================================
-
-    _COMPILED_PROMPT_INJECTIONS = [
-        re.compile(pattern, re.IGNORECASE)
-        for pattern in PROMPT_INJECTIONS
-    ]
-
-    _COMPILED_SELF_HARM = [
-        re.compile(pattern, re.IGNORECASE)
-        for pattern in SELF_HARM_PATTERNS
-    ]
-
-    _COMPILED_RESTRICTED = [
-        re.compile(pattern, re.IGNORECASE)
-        for pattern in RESTRICTED_TOPICS
-    ]
-
-    _COMPILED_CODE = [
-        re.compile(pattern, re.IGNORECASE | re.MULTILINE)
-        for pattern in CODE_PATTERNS
-    ]
-
+    # 7. PRE-COMPILED REGEX
+    _COMPILED_PROMPT_INJECTIONS = [re.compile(p, re.IGNORECASE) for p in PROMPT_INJECTIONS]
+    _COMPILED_SELF_HARM = [re.compile(p, re.IGNORECASE) for p in SELF_HARM_PATTERNS]
+    _COMPILED_RESTRICTED = [re.compile(p, re.IGNORECASE) for p in RESTRICTED_TOPICS]
+    _COMPILED_CODE = [re.compile(p, re.IGNORECASE | re.MULTILINE) for p in CODE_PATTERNS]
     _COMPILED_EMERGENCY_RULES = {
-        category: [
-            re.compile(pattern, re.IGNORECASE)
-            for pattern in patterns
-        ]
-        for category, patterns in EMERGENCY_RULES.items()
+        cat: [re.compile(p, re.IGNORECASE) for p in pats]
+        for cat, pats in EMERGENCY_RULES.items()
     }
-
-    _RE_HEALTH_KEYWORDS = re.compile(
-        r"\b("
-        + "|".join(
-            re.escape(word)
-            for word in sorted(
-                MEDICAL_HEALTH_KEYWORDS,
-                key=len,
-                reverse=True
-            )
-        )
-        + r")\b",
-        re.IGNORECASE
-    )
-
-    _RE_NUTRITION_KEYWORDS = re.compile(
-        r"\b("
-        + "|".join(
-            re.escape(word)
-            for word in sorted(
-                NUTRITION_KEYWORDS,
-                key=len,
-                reverse=True
-            )
-        )
-        + r")\b",
-        re.IGNORECASE
-    )
-
-    _RE_CONVERSATIONAL = re.compile(
-        r"\b("
-        + "|".join(
-            re.escape(word)
-            for word in sorted(
-                CONVERSATIONAL_KEYWORDS,
-                key=len,
-                reverse=True
-            )
-        )
-        + r")\b",
-        re.IGNORECASE
-    )
-
     _COMPILED_DIAGNOSTIC_CERTAINTY = [
-        (
-            re.compile(pattern, re.IGNORECASE),
-            replacement
-        )
-        for pattern, replacement in DIAGNOSTIC_CERTAINTY_PATTERNS
+        (re.compile(p, re.IGNORECASE), rep) for p, rep in DIAGNOSTIC_CERTAINTY_PATTERNS
     ]
 
-    # =======================================================================
     # INITIALIZATION
-    # =======================================================================
-
     def __init__(self):
         logger.info("⚡ MediQwen Guardrails Safety Engine Online.")
 
-    # =======================================================================
-    # NORMALIZATION
-    # =======================================================================
-
     @staticmethod
     def normalize_input(text: str) -> str:
-        """
-        Normalize whitespace for single-line semantic matching.
-        """
         if not isinstance(text, str):
             return ""
-
         return re.sub(r"\s+", " ", text).strip()
 
-    # =======================================================================
-    # SECURITY DETECTION
-    # =======================================================================
-
     def detect_prompt_injection(self, text: str) -> Dict[str, Any]:
-        """
-        Detect explicit prompt injection or system manipulation attempts.
-        """
         for pattern in self._COMPILED_PROMPT_INJECTIONS:
             if pattern.search(text):
-                return {
-                    "detected": True,
-                    "matched_pattern": pattern.pattern
-                }
-
-        return {
-            "detected": False,
-            "matched_pattern": None
-        }
-
-    # =======================================================================
-    # SELF-HARM / CRISIS DETECTION
-    # =======================================================================
+                return {"detected": True, "matched_pattern": pattern.pattern}
+        return {"detected": False, "matched_pattern": None}
 
     def detect_self_harm(self, text: str) -> Dict[str, Any]:
-        """
-        Detect explicit self-harm or suicide crisis signals.
-        """
         for pattern in self._COMPILED_SELF_HARM:
             if pattern.search(text):
-                return {
-                    "detected": True,
-                    "matched_pattern": pattern.pattern
-                }
-
-        return {
-            "detected": False,
-            "matched_pattern": None
-        }
+                return {"detected": True, "matched_pattern": pattern.pattern}
+        return {"detected": False, "matched_pattern": None}
 
     @staticmethod
     def self_harm_response() -> str:
-        """
-        Safe response for detected self-harm or suicide signals.
-        """
         return (
             "I'm sorry that you're going through this. "
             "If you may be in immediate danger or think you might hurt "
             "yourself, please contact your local emergency service or go "
-            "to the nearest emergency department now. "
-            "If possible, stay with someone you trust and tell them what "
-            "you're experiencing."
+            "to the nearest emergency department now."
         )
 
-    # =======================================================================
-    # RESTRICTED CONTENT
-    # =======================================================================
-
     def detect_restricted_content(self, text: str) -> Dict[str, Any]:
-        """
-        Detect dangerous requests outside MediQwen's permitted scope.
-        """
         for pattern in self._COMPILED_RESTRICTED:
             if pattern.search(text):
-                return {
-                    "detected": True,
-                    "matched_pattern": pattern.pattern
-                }
-
-        return {
-            "detected": False,
-            "matched_pattern": None
-        }
-
-    # =======================================================================
-    # EMERGENCY DETECTION
-    # =======================================================================
+                return {"detected": True, "matched_pattern": pattern.pattern}
+        return {"detected": False, "matched_pattern": None}
 
     def detect_emergency(self, text: str) -> Dict[str, Any]:
         """
         Detect possible emergency medical signals.
+        Uses lowercased stripped text for pattern matching.
         """
-        normalized = self.normalize_input(text).lower()
+        if not isinstance(text, str) or not text.strip():
+            return {
+                "is_emergency": False,
+                "category": None,
+                "matched_pattern": None,
+                "matched_text": None,
+                "risk_level": None,
+            }
+
+        normalized = text.strip().lower()
 
         for category, patterns in self._COMPILED_EMERGENCY_RULES.items():
             for pattern in patterns:
@@ -732,7 +439,7 @@ class Guardrails:
                         "category": category,
                         "matched_pattern": pattern.pattern,
                         "matched_text": match.group(0),
-                        "risk_level": "EMERGENCY"
+                        "risk_level": "EMERGENCY",
                     }
 
         return {
@@ -740,89 +447,36 @@ class Guardrails:
             "category": None,
             "matched_pattern": None,
             "matched_text": None,
-            "risk_level": None
+            "risk_level": None,
         }
-
-    def is_emergency_query(self, text: str) -> bool:
-        """
-        Backwards-compatible emergency helper.
-        """
-        return self.detect_emergency(text)["is_emergency"]
-
-    # =======================================================================
-    # TECHNICAL / CODE DETECTION
-    # =======================================================================
+        
 
     def is_code_request(self, text: str) -> bool:
-        """
-        Detect programming or technical requests using raw text.
-        Preserves original newlines for multiline pattern anchors.
-        """
-        return any(
-            pattern.search(text)
-            for pattern in self._COMPILED_CODE
-        )
+        return any(pattern.search(text) for pattern in self._COMPILED_CODE)
 
-    # =======================================================================
-    # SCOPE DETECTION
-    # =======================================================================
-
-    def classify_scope(
-        self,
-        text: str,
-        has_image: bool = False
-    ) -> str:
-        """
-        Lightweight scope classification.
-        """
-        normalized = self.normalize_input(text).lower()
-
-        if has_image:
-            if (
-                normalized in self.VAGUE_VISUAL_QUERIES
-                or len(normalized.split()) <= 6
-            ):
-                return "MULTIMODAL"
-
-        if self._RE_HEALTH_KEYWORDS.search(normalized):
-            return "MEDICAL"
-
-        if self._RE_NUTRITION_KEYWORDS.search(normalized):
-            return "NUTRITION"
-
-        if self._RE_CONVERSATIONAL.search(normalized):
-            return "CASUAL"
-
-        if any(phrase in normalized for phrase in self.CAPABILITY_KEYWORDS):
-            return "CASUAL"
-
-        return "OUT_OF_SCOPE"
-
-    # =======================================================================
     # MAIN INPUT VALIDATION
-    # =======================================================================
-
-    def validate_input(
-        self,
-        text: str,
-        has_image: bool = False
-    ) -> Tuple[bool, str]:
+    def validate_input(self, text: str, has_image: bool = False) -> Tuple[bool, str]:
         """
-        Validate user input using normalized and raw representations.
-        Returns (is_safe, processed_text_or_response).
+        Validate user input while preserving raw newlines for code detection.
+        Uses stripped text for text-based safety checks.
         """
-        text_raw = text
-        text_clean = self.normalize_input(text)
+        if not isinstance(text, str):
+            text = ""
 
-        if not text_clean:
-            return False, "Please provide a medical or health-related question."
+        if not text.strip():
+            if not has_image:
+                return False, "Please provide a medical or health-related question."
+            return True, ""
+
+        text_raw = text 
+        text_clean = text.strip()  
 
         # 1. Prompt Injection
         injection = self.detect_prompt_injection(text_clean)
         if injection["detected"]:
             logger.warning(
                 "🛑 Prompt injection intercepted: %s",
-                injection["matched_pattern"]
+                injection["matched_pattern"],
             )
             return False, (
                 "I cannot fulfill requests to override instructions, "
@@ -840,50 +494,36 @@ class Guardrails:
         if restricted["detected"]:
             logger.warning(
                 "🛑 Restricted request intercepted: %s",
-                restricted["matched_pattern"]
+                restricted["matched_pattern"],
             )
             return False, (
                 "I cannot provide instructions that could facilitate "
                 "harmful, dangerous, or unsafe activities."
             )
 
-        # 4. Emergency Detection (Non-blocking)
+        # 4. Emergency Signal Detection
         emergency = self.detect_emergency(text_clean)
         if emergency["is_emergency"]:
             logger.warning(
                 "🚨 Emergency signal detected | category=%s | match=%s",
                 emergency["category"],
-                emergency["matched_text"]
+                emergency["matched_text"],
             )
 
-        # 5. Code / Technical Requests (Evaluated against raw multiline text)
+        # 5. Code / Technical Requests (Evaluated against raw multiline text!)
         if self.is_code_request(text_raw):
             logger.info("🛑 Technical/code request blocked.")
             return False, (
-                "I am a specialized medical AI assistant designed specifically for health and clinical information, so I cannot "
-                "provide programming or software development assistance. If you have a health-related question, I’d be happy to help."
+                "I am a specialized medical AI assistant designed specifically for "
+                "health and clinical information, so I cannot provide programming "
+                "or software development assistance. If you have a health-related question, "
+                "I’d be happy to help."
             )
 
-    
         return True, text_clean
 
-    # =======================================================================
     # OUTPUT GUARDRAILS
-    # =======================================================================
-
-    def apply_output_guardrails(
-        self,
-        response_text: str,
-        risk_metadata: Dict[str, Any] = None
-    ) -> str:
-        """
-        Applies deterministic safety controls to model outputs.
-        
-        Responsibilities:
-            - Softens diagnostic certainty claims.
-            - Prepends deterministic, region-neutral emergency guidance.
-            - Appends educational disclaimers exclusively for non-emergency medical responses.
-        """
+    def apply_output_guardrails(self, response_text: str, risk_metadata: Dict[str, Any] = None) -> str:
         if not response_text:
             return "I was unable to generate a response. Please try again."
 
@@ -892,18 +532,16 @@ class Guardrails:
 
         processed_text = response_text.strip()
 
-        # 1. Soften diagnostic certainty phrasing
         for pattern, replacement in self._COMPILED_DIAGNOSTIC_CERTAINTY:
             processed_text = pattern.sub(replacement, processed_text)
 
         risk_level = str(risk_metadata.get("risk_level", "")).upper()
         is_emergency = (
-            risk_level == "EMERGENCY" 
+            risk_level == "EMERGENCY"
             or risk_metadata.get("is_emergency", False)
             or risk_metadata.get("guardrail_emergency", False)
         )
 
-        # 2. EMERGENCY PATH: Prepend deterministic banner and return (no duplicate disclaimers)
         if is_emergency:
             emergency_banner = (
                 "🚨 **Emergency Guidance**\n\n"
@@ -915,16 +553,10 @@ class Guardrails:
             )
             if "Emergency Guidance" not in processed_text:
                 processed_text = emergency_banner + processed_text
-            
             return processed_text
 
-        # 3. STANDARD CLINICAL PATH: Append medical disclaimer
         is_medical = risk_metadata.get("is_medical", False) or (risk_level in ["MEDIUM", "HIGH"])
         if is_medical and self.DISCLAIMER_MARKER not in processed_text:
             processed_text += self.DISCLAIMER
 
         return processed_text
-
-
-# Backwards compatibility alias
-format_output = Guardrails.apply_output_guardrails
