@@ -12,6 +12,7 @@ class AgentState(TypedDict):
     process_image: bool                     # Authorized flag set by Dialogue Manager for Turn 1 image processing
     processed_image_payload: Optional[str] # Base64-encoded processed image data for direct LLM vision
     is_online: bool                         # Toggle mapping: True allows live Web Search tool fallback
+    
 
     # 2. Dialogue FSM & Deferred RAG Tracking
     dialog_state: str                       # Active state: 'chat', 'multimodal_triage', 'clinical', 'closing', 'blocked'
@@ -50,3 +51,4 @@ class AgentState(TypedDict):
     tentative_subject: Optional[str]
     subject_confidence: Optional[str]
     visual_extraction_latency_ms: Optional[float]
+    image_validation_status: Optional[str]

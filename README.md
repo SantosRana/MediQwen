@@ -57,38 +57,46 @@ Unlike conventional chatbot pipelines, MediQwen combines deterministic state tra
 # 🏗 System Architecture
 
 ```mermaid
+
 flowchart TD
-    A[User Input: Text or Text + Image] --> B[1. Dialogue Manager FSM + Shared Guardrails]
-    B -->|Unsafe / Blocked| R[Safe Refusal Node]
-    B -->|Safe Input| D{Image Provided?}
+    A[User Input] --> B[Guardrails]
+    
+    B -->|Unsafe| R[Safe Refusal]
+    B -->|Text Query| D[Scope Classifier]
+    B -->|Image Attached| E[Multimodal Processor]
 
-    D -->|Yes| M[Multimodal Triage Branch]
-    D -->|No| S[BGE Scope Classification + Context Resolution]
+    D -->|Out of Scope| R
+    D -->|Casual| G[Qwen Generator]
+    D -->|Medical / Nutrition| F[Risk Classifier]
 
-    S -->|OUT_OF_SCOPE / Blocked| R
-    S -->|CASUAL / No Retrieval Needed| G[Generator: Local Ollama]
-    S -->|MEDICAL / NUTRITION / Retrieval Needed| C[Risk Classifier]
-    M --> C
+    E --> F
 
-    C --> E{Emergency Risk?}
-    E -->|Yes| EG[Preserve Emergency Guidance]
-    E -->|No| P[Image Preprocessing: Resize + PNG/Base64]
-    EG --> P
+    F --> H{Retrieval Needed?}
 
-    P --> Q{Image Guidance Needs Retrieval?}
-    Q -->|Yes| X[Visual Subject Extractor]
-    Q -->|No| G
+    H -->|No| G
+    H -->|Yes, Image| I[Extract Visual Subject]
+    H -->|Yes, Text| J[Local Knowledge Base]
 
-    X --> V[Local Vector Retriever]
-    C -->|Text Retrieval Needed| V
+    I --> J
 
-    V -->|Relevant Local Context| G
-    V -->|Insufficient Context + Online| W[Trusted Web Search Fallback]
-    V -->|Insufficient Context + Offline| F[Offline Fallback / Safe Refusal]
-    W --> G
-    G --> O[Streamlit UI / FastAPI Response]
-    R --> O
-    F --> O
+    J -->|Evidence Found| G
+    J -->|Missing, Online| K[Trusted Web Search]
+    J -->|Missing, Offline| L[Offline Fallback]
+
+    K --> G
+
+    G --> M[Final Response]
+    R --> M
+    L --> M
+
+    classDef safety fill:#fde8e8,stroke:#d9534f,color:#222
+    classDef process fill:#e8f0fe,stroke:#4285f4,color:#222
+    classDef output fill:#e6f4ea,stroke:#34a853,color:#222
+
+    class B,R safety
+    class D,E,F,H,I,J,K process
+    class G,L,M output
+
 ```
 
 ---

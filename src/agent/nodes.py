@@ -377,7 +377,6 @@ def run_multimodal_processing(state: AgentState) -> Dict[str, Any]:
             "image_proc_latency_ms": elapsed_ms
         }
 
-# In src/agent/nodes.py
 
 def run_visual_subject_extraction(state: AgentState) -> Dict[str, Any]:
     """Extract a tentative visual subject before clinical retrieval (Stage 1 Pass).
@@ -387,9 +386,10 @@ def run_visual_subject_extraction(state: AgentState) -> Dict[str, Any]:
     It operates under strict safety guardrails:
     1. Describes visible features using 1-3 words of observational language.
     2. Explicitly avoids confirming diagnostic labels or inferring diseases.
-    3. Handles non-medical or ambiguous images safely by returning `None` for the 
-       clinical subject, allowing downstream retrieval to fall back cleanly to 
-       the user's text query.
+    3. Confidently non-medical images set `image_validation_status="non_medical"`, 
+       halt retrieval (`requires_retrieval=False`), and prepare a guidance response.
+    4. Uncertain/low-confidence images set `image_validation_status="uncertain"` 
+       and preserve text-based fallback retrieval.
 
     Args:
         state (AgentState): The active LangGraph workflow state containing:
@@ -400,8 +400,11 @@ def run_visual_subject_extraction(state: AgentState) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: State update dictionary containing:
             - tentative_subject (Optional[str]): Cleaned observational term or None.
-            - subject_confidence (str): "high", "medium", or "low".
+            - subject_confidence (Optional[str]): "high", "medium", or "low".
             - clinical_subject (Optional[str]): Preserved subject key for vector search.
+            - image_validation_status (Optional[str]): "medical", "non_medical", or "uncertain".
+            - requires_retrieval (bool): Updated retrieval flag.
+            - agent_response (Optional[str]): Prepared guidance response for non-medical images.
             - visual_extraction_latency_ms (float): Execution duration in milliseconds.
     """
     logger.info("=== [Node: Visual Subject Extraction (Stage 1)] ===")
@@ -434,7 +437,7 @@ relevant to the user's clinical question.
 
 Rules:
 1. Do not provide a confirmed diagnosis.
-2. If the image is clearly non-medical, return "non_medical".
+2. If the image is clearly non-medical (e.g., car, landscape, building, object), return "non_medical".
 3. If a possible medical finding cannot be identified reliably, return "uncertain".
 4. If a clear clinical or dermatological finding is visible, summarize it in 1-3 words (e.g., "acne vulgaris", "skin rash", "erythema" or "visible swelling").
 5. Do not infer a disease solely from an image.
@@ -464,7 +467,7 @@ Rules:
         ],
         "think": False,
         "options": {
-            "temperature": 0.1,    # Low temperature for deterministic JSON output
+            "temperature": 0.1,     # Low temperature for deterministic JSON output
             "num_predict": 128,     # Low token budget for fast Stage 1 pass (~1.2s)
         },
         "stream": False,
@@ -523,26 +526,46 @@ Rules:
             confidence = "low"
 
         subject = subject.strip().lower()
-
-        # ------------------------------------------------------------------
-        # 6. Scope Boundary Normalization (Non-Medical / Uncertain Images)
-        # ------------------------------------------------------------------
-        if subject in {
-            "uncertain",
-            "non_medical",
-            "non-medical",
-            "none",
-        }:
-            logger.info("ℹ️ Stage 1 Extractor identified a non-medical or uncertain image.")
-            # Normalizing to None allows vector_search() to fall back to the user query
-            subject = None
-            confidence = "low"
-
         latency_ms = (time.perf_counter() - start) * 1000
 
+        # ------------------------------------------------------------------
+        # 6. Structured Visual Triage & Scope Boundary Normalization
+        # ------------------------------------------------------------------
+        # Case A: Confidently Non-Medical Image
+        if subject in {"non_medical", "non-medical", "not_medical"}:
+            logger.info("🚫 Confident non-medical image detected. Halting retrieval.")
+            
+            non_medical_refusal = (
+                "The uploaded image doesn't appear to show a health-related subject that I can assess clinically. "
+                "Please upload a relevant medical image, such as a skin concern or visible injury, so I can assist with cautious observations.\n\n"
+                "You can also ask a general medical question without an image."
+            )
+            
+            return {
+                "tentative_subject": None,
+                "subject_confidence": "low",
+                "clinical_subject": None,
+                "image_validation_status": "non_medical",
+                "requires_retrieval": False,
+                "agent_response": non_medical_refusal,
+                "visual_extraction_latency_ms": latency_ms,
+            }
+
+        # Case B: Uncertain Visual Finding
+        if subject in {"uncertain", "none"}:
+            logger.info("⚠️ Uncertain visual finding. Preserving text-based fallback retrieval.")
+            return {
+                "tentative_subject": None,
+                "subject_confidence": "low",
+                "clinical_subject": state.get("clinical_subject"),
+                "image_validation_status": "uncertain",
+                "requires_retrieval": state.get("requires_retrieval", True),
+                "visual_extraction_latency_ms": latency_ms,
+            }
+
+        # Case C: Confident Medical Finding
         logger.info(
-            "✅ Stage 1 Visual Extraction Complete | subject='%s' | "
-            "confidence='%s' | latency=%.1f ms",
+            "✅ Stage 1 Visual Extraction Complete | subject='%s' | confidence='%s' | latency=%.1f ms",
             subject,
             confidence,
             latency_ms,
@@ -552,6 +575,8 @@ Rules:
             "tentative_subject": subject,
             "subject_confidence": confidence,
             "clinical_subject": subject,
+            "image_validation_status": "medical",
+            "requires_retrieval": state.get("requires_retrieval", True),
             "visual_extraction_latency_ms": latency_ms,
         }
 
@@ -565,11 +590,13 @@ Rules:
 
         logger.warning("⚠️ Visual extraction failed safely: %s", err)
 
-        # Defensive Fallback: Never invent or hallucinate a subject on error
+        # Defensive Fallback: Treat errors as uncertain, preserving text retrieval
         return {
             "tentative_subject": None,
             "subject_confidence": "low",
-            "clinical_subject": None,
+            "clinical_subject": state.get("clinical_subject"),
+            "image_validation_status": "uncertain",
+            "requires_retrieval": state.get("requires_retrieval", True),
             "visual_extraction_latency_ms": latency_ms,
         }
         
@@ -593,31 +620,19 @@ def run_vector_search(state: AgentState) -> Dict[str, Any]:
         }
 
     user_query = state.get("user_query", "").strip()
-    clinical_subject = (
-        state.get("clinical_subject")
-        or state.get("tentative_subject")
-    )
+    clinical_subject = state.get("clinical_subject")
 
-    query_lower = user_query.lower()
-
-    # Intent-expanded query construction
-    if clinical_subject:
-        if any(k in query_lower for k in ("treatment", "treat", "cure", "management", "relief")):
-            raw_query = f"{clinical_subject} treatment and management"
-
-        elif any(k in query_lower for k in ("cause", "causes", "why", "trigger", "triggers")):
-            raw_query = f"{clinical_subject} causes and triggers"
-
-        elif any(k in query_lower for k in ("symptom", "symptoms", "signs", "warning signs")):
-            raw_query = f"{clinical_subject} symptoms and warning signs"
-
-        elif any(k in query_lower for k in ("prevent", "prevention", "avoid")):
-            raw_query = f"{clinical_subject} prevention"
-
-        else:
-            raw_query = f"{clinical_subject} {user_query}"
+    # Prepend clinical_subject ONLY if it isn't already present as a standalone word
+    if (
+        clinical_subject
+        and not re.search(
+            rf"\b{re.escape(clinical_subject)}\b",
+            user_query,
+            flags=re.IGNORECASE,
+        )
+    ):
+        raw_query = f"{clinical_subject} {user_query}"
     else:
-        # Extraction failed: retain original user intent
         raw_query = user_query
 
     search_query = normalize_query(raw_query)
@@ -1044,10 +1059,11 @@ def run_qwen_generation(state: AgentState) -> Dict[str, Any]:
     # -------------------------------------------------------------
     prepopulated_response = state.get("agent_response")
     is_affirmation = state.get("is_affirmation_response", False)
+    is_non_medical_image = state.get("image_validation_status") == "non_medical"
 
-    if prepopulated_response and (dialog_state == "blocked" or is_affirmation):
+    if prepopulated_response and (dialog_state == "blocked" or is_affirmation or is_non_medical_image):
         logger.info(
-            "🛑 Preserving pre-populated authoritative response; skipping Ollama generation."
+            "🛑 Preserving pre-populated authoritative response (non-medical image/refusal); skipping Ollama generation."
         )
         return {
             "agent_response": prepopulated_response,
@@ -1187,7 +1203,7 @@ System safety, risk classification, routing decisions, and guardrails are author
         "options": {
             "temperature": 0.2,
             "num_ctx": 4096,
-            "num_predict": max_tokens, # 👈 Prevents truncation on detailed visual/emergency turns
+            "num_predict": max_tokens, # Prevents truncation on detailed visual/emergency turns
         },
         "stream": False,
     }

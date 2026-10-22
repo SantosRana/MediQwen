@@ -179,6 +179,21 @@ def _contains_marker(query: str, markers: tuple[str, ...]) -> bool:
         for marker in markers
     )
 
+def is_explicit_technical_query(query: str) -> bool:
+    """Detect clear technical intent without relying on stale context."""
+    q = query.lower().strip()
+
+    # Explicit requests to generate code for a technical artifact.
+    if re.search(
+        r"\b(generate|write|create|build|implement|debug|fix|"
+        r"refactor|compile)\b.{0,60}\b"
+        r"(html|python|javascript|code|script|website|sql|algorithm)\b",
+        q,
+    ):
+        return True
+
+    return _contains_marker(q, _TECHNICAL_MARKERS)
+
 
 class BGEScopeClassifier:
     """
@@ -330,23 +345,28 @@ def classify_scope_with_gate(
     clinical_subject: Optional[str],
 ) -> Dict[str, Any]:
     """
-    Main scope-classification entry point for the Dialogue Manager.
+    Classify scope with explicit-intent and dialogue-context handling.
     
-    Refactored Hierarchy:
-        1. Explicit Nutrition intent override
-        2. Confident BGE semantic classification
-        3. Anaphora + existing clinical subject context
-        4. Deterministic fallback via resolve_scope_with_context
+    Priority Hierarchy:
+        1. Explicit technical intent → OUT_OF_SCOPE
+        2. Explicit nutrition intent → NUTRITION
+        3. Anaphora + active clinical_subject → MEDICAL
+        4. Confident BGE semantic classification → BGE Best Scope
+        5. Conservative fallback → resolve_scope_with_context
     """
     bge_result = classifier.classify_scope(query)
-
-    best_scope = bge_result["best_scope"]
-    best_score = bge_result["best_score"]
-    margin = bge_result["margin"]
-
     q_lower = query.lower().strip()
 
-    # 1. Explicit Nutrition intent override
+    # 1. Explicit technical intent overrides stale clinical context.
+    if is_explicit_technical_query(q_lower):
+        return {
+            **bge_result,
+            "scope": "OUT_OF_SCOPE",
+            "scope_source": "TECHNICAL_INTENT_OVERRIDE",
+            "decision": "HIGH_CONFIDENCE",
+        }
+
+    # 2. Explicit nutrition intent.
     if _contains_marker(q_lower, _NUTRITION_MARKERS):
         return {
             **bge_result,
@@ -355,21 +375,7 @@ def classify_scope_with_gate(
             "decision": "HIGH_CONFIDENCE",
         }
 
-    # 2. Standard BGE confidence + margin threshold gate
-    is_confident = (
-        best_score >= CONFIDENCE_THRESHOLD
-        and margin >= MARGIN_THRESHOLD
-    )
-
-    if is_confident:
-        return {
-            **bge_result,
-            "scope": best_scope,
-            "scope_source": "BGE",
-            "decision": "HIGH_CONFIDENCE",
-        }
-
-    # 3. Anaphora check + Active dialogue context
+    # 3. Resolve anaphoric follow-ups using the active clinical subject.
     has_anaphora = bool(ANAPHORIC_PATTERNS.search(q_lower))
 
     if has_anaphora and clinical_subject:
@@ -380,21 +386,33 @@ def classify_scope_with_gate(
             "decision": "CONTEXT_RESOLVED",
         }
 
-    # 4. Low-confidence / Low-margin fallback via resolve_scope_with_context
+    # 4. Accept confident BGE predictions.
+    is_confident = (
+        bge_result["best_score"] >= CONFIDENCE_THRESHOLD
+        and bge_result["margin"] >= MARGIN_THRESHOLD
+    )
+
+    if is_confident:
+        return {
+            **bge_result,
+            "scope": bge_result["best_scope"],
+            "scope_source": "BGE",
+            "decision": "HIGH_CONFIDENCE",
+        }
+
+    # 5. Conservative fallback for uncertain queries.
     resolved_scope = resolve_scope_with_context(
         query=q_lower,
         clinical_subject=clinical_subject,
     )
 
-    scope_source = (
-        "DIALOG_CONTEXT"
-        if clinical_subject and resolved_scope == "MEDICAL"
-        else "DETERMINISTIC_FALLBACK"
-    )
-
     return {
         **bge_result,
         "scope": resolved_scope,
-        "scope_source": scope_source,
+        "scope_source": (
+            "DIALOG_CONTEXT"
+            if clinical_subject and resolved_scope == "MEDICAL"
+            else "DETERMINISTIC_FALLBACK"
+        ),
         "decision": "FALLBACK_ROUTED",
     }

@@ -2,7 +2,8 @@
 """
 Integration Test Suite for MediQwen Agentic LangGraph State Engine.
 Validates FSM switchboard routing, risk tier state updates, RAG retrievals,
-web search fallbacks, offline safe refusals, prompt injection blocks, and code interception.
+web search fallbacks, offline safe refusals, prompt injection blocks, code interception,
+and Stage 1 visual subject extraction.
 """
 
 import pytest
@@ -19,6 +20,8 @@ def create_initial_state(query: str, **kwargs) -> AgentState:
     state: AgentState = {
         "user_query": query,
         "image_path": None,
+        "process_image": False,
+        "processed_image_payload": None,
         "is_online": False,
         "risk_level": "LOW",
         "risk_metadata": {},
@@ -28,8 +31,9 @@ def create_initial_state(query: str, **kwargs) -> AgentState:
         "agent_response": "",
         "dialog_state": "chat",
         "requires_retrieval": False,
-        "process_image": False,
         "clinical_subject": None,
+        "tentative_subject": None,
+        "subject_confidence": "low",
         "followup_pending": False,
         "routing_trace": []
     }
@@ -54,11 +58,11 @@ def test_emergency_chest_pain_routing():
     assert "emergency guidance" in response or any(keyword in response for keyword in ["999", "911", "112", "emergency", "immediate"])
 
 
-def test_multimodal_turn1_triage_routing():
+def test_multimodal_turn1_guidance_routing():
     """
-    Scenario 2: Multimodal Image Triage.
-    Verifies that uploading an image sets dialog_state to 'multimodal_triage',
-    enables process_image, and bypasses immediate vector retrieval.
+    Scenario 2A: Multimodal Image Guidance Query (Stage 1 Extractor + RAG).
+    Verifies that uploading an image with a treatment query sets dialog_state to 'multimodal_triage',
+    authorizes retrieval, executes Stage 1 visual extraction, populates clinical_subject, and retrieves RAG evidence.
     """
     test_img = Path("data/test_assets/hives.jpg")
     
@@ -66,7 +70,7 @@ def test_multimodal_turn1_triage_routing():
         pytest.skip(f"Multimodal test asset missing at '{test_img}'.")
 
     state = create_initial_state(
-        query="What could be causing this localized skin rash on my forearm?",
+        query="What are the possible preventive measures or cure for this sort of rash?",
         image_path=str(test_img)
     )
 
@@ -74,10 +78,60 @@ def test_multimodal_turn1_triage_routing():
 
     assert final_state["is_safe"] is True
     assert final_state["dialog_state"] == "multimodal_triage"
-    assert final_state.get("process_image") is True
+    assert final_state["requires_retrieval"] is True
+    assert final_state.get("clinical_subject") is not None
+    assert final_state.get("visual_extraction_latency_ms", 0.0) >= 0.0
+    assert len(final_state.get("agent_response", "")) > 0
+
+
+def test_multimodal_observation_short_circuit():
+    """
+    Scenario 2B: Multimodal Image Observation Query (Short-Circuit Direct to Generator).
+    Verifies that asking for an observation only ("What do you see?") sets requires_retrieval = False
+    and uses post_classification_router to route straight to generator without running vector search.
+    """
+    test_img = Path("data/test_assets/hives.jpg")
+    
+    if not test_img.exists():
+        pytest.skip(f"Multimodal test asset missing at '{test_img}'.")
+
+    state = create_initial_state(
+        query="What do you observe in this image?",
+        image_path=str(test_img)
+    )
+
+    final_state = mediqwen_agent.invoke(state)
+
+    assert final_state["is_safe"] is True
+    assert final_state["dialog_state"] == "multimodal_triage"
     assert final_state["requires_retrieval"] is False
+    assert len(final_state.get("retrieved_context", [])) == 0
 
 
+def test_non_medical_image_requests_health_related_image():
+    """Non-medical images should bypass retrieval, set image_validation_status='non_medical', and return guidance."""
+    car_img = Path("data/test_assets/car.jpg")
+
+    if not car_img.exists():
+        pytest.skip(f"Non-medical test asset missing at '{car_img}'.")
+
+    state = create_initial_state(
+        query="What are the common treatment options for skin rash?",
+        image_path=str(car_img),
+    )
+
+    final_state = mediqwen_agent.invoke(state)
+
+    assert final_state["is_safe"] is True
+    assert final_state["requires_retrieval"] is False
+    assert final_state.get("image_validation_status") == "non_medical"
+    assert final_state.get("tentative_subject") is None
+    assert final_state.get("clinical_subject") is None
+    assert len(final_state.get("retrieved_context", [])) == 0
+
+    response = final_state.get("agent_response", "").lower()
+    assert "health-related image" in response or "relevant medical image" in response
+    
 def test_knowledge_base_hit_angina():
     """
     Scenario 3: Local Knowledge Base Hit.
@@ -195,6 +249,6 @@ def test_code_snippet_interception():
         "cannot provide",
         "restricted from generating code",
         "technical script generation",
-       "cannot fulfill requests for programming assistance" ,
-       "explain code snippets",
+        "cannot fulfill requests for programming assistance",
+        "explain code snippets",
     ])

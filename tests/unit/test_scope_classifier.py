@@ -78,7 +78,7 @@ def test_technical_query_overrides_clinical_context(scope_classifier):
     )
 
     assert result["scope"] == "OUT_OF_SCOPE"
-    assert result["scope_source"] == "TECHNICAL_OVERRIDE"
+    assert result["scope_source"] == "TECHNICAL_INTENT_OVERRIDE"  # 👈 Fixed matching string
 
 
 # ============================================================================

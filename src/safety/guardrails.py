@@ -191,6 +191,30 @@ class Guardrails:
     r"\b(?:system|developer)\s+prompt\s*:",
     r"\b(?:system|developer)\s+message\s*:",
     r"\b(?:assistant|model)\s+instructions?\s*:",
+    
+    # Internal file / skills extraction
+    r"\b(?:show|reveal|print|output|dump|display)\s+"
+    r"(?:me\s+)?(?:the\s+)?(?:markdown\s+)?"
+    r"(?:contents?|content)\s+of\s+"
+    r"(?:your\s+)?(?:internal|hidden|private)\s+"
+    r"(?:skills?|instruction|prompt)\s+files?\b",
+
+    # Initial or original system prompt extraction
+    r"\b(?:print|show|reveal|output|repeat|quote)\s+"
+    r"(?:your\s+)?(?:initial|original|system|developer)\s+"
+    r"(?:system\s+)?prompt\s+instructions?\b",
+
+    # Developer directives exposed from above the current message
+    r"\b(?:output|print|show|reveal|repeat|quote)\s+"
+    r"(?:the\s+)?(?:developer|system)\s+"
+    r"(?:directives?|instructions?|rules?)\s+"
+    r"(?:above|before)\s+(?:this\s+line|my\s+message)\b",
+
+    # Explicit system override
+    r"\bsystem\s+override\s*:\s*"
+    r".{0,100}\b(?:disable|bypass|ignore|remove)\b"
+    r".{0,60}\b(?:medical\s+)?safety\s+"
+    r"(?:protocols?|rules?|controls?|guardrails?)\b",
 ]
 
     # 2. SELF-HARM / CRISIS DETECTION

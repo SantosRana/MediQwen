@@ -176,6 +176,12 @@ def web_search_validation_router(state: AgentState) -> str:
     state["routing_trace"] = trace + ["web_search_tool -> empty_web_miss -> safe_refusal_node"]
     return "safe_refusal_node"
 
+def post_visual_extraction_router(state: AgentState) -> str:
+    """Route after visual subject extraction based on image validation status and retrieval requirements."""
+    if state.get("image_validation_status") == "non_medical" or not state.get("requires_retrieval", False):
+        return "generator"
+    
+    return "retriever"
 
 # =======================================================================
 # 🔗 GRAPH EDGE BINDINGS
@@ -208,9 +214,17 @@ workflow.add_conditional_edges(
     }
 )
 
-workflow.add_edge("visual_subject_extractor", "retriever")
+# 4. Post-Visual Extraction Conditional Routing
+workflow.add_conditional_edges(
+    "visual_subject_extractor",
+    post_visual_extraction_router,
+    {
+        "retriever": "retriever",
+        "generator": "generator",
+    }
+)
 
-# 4. Retriever Exit Conditional Edge Routing
+# 5. Retriever Exit Conditional Edge Routing
 workflow.add_conditional_edges(
     "retriever",
     knowledge_base_router,
@@ -221,7 +235,7 @@ workflow.add_conditional_edges(
     }
 )
 
-# 5. Web Search Validation Edge Routing
+# 6. Web Search Validation Edge Routing
 workflow.add_conditional_edges(
     "web_search_tool",
     web_search_validation_router,
