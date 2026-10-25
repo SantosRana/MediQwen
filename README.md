@@ -370,7 +370,7 @@ python tests/benchmark/evaluate_pipeline.py
   * **`MEDICAL`:** **0.97 Precision** | 0.85 Recall | 0.91 F1-Score *(High-precision routing to prevent clinical false positives)*
 
 ### **LangGraph Pipeline & End-to-End Regression Matrix**
-* **10-Scenario Evaluator Pass Rate:** **100%** (10/10 LangSmith production regression scenarios cleared)
+* **11-Scenario Evaluator Pass Rate:** **100%** (11/11 LangSmith production regression scenarios cleared)
 * **Layer 1 Guardrail Interception:** **< 10 ms** (Deterministic FSM intercept for injections and code requests)
 * **Cached Web RAG Latency:** **~140 ms** (Local ChromaDB cache)
 
