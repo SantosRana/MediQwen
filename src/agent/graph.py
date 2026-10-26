@@ -73,28 +73,19 @@ def dialogue_fsm_switchboard(state: AgentState) -> str:
 
 def post_classification_router(state: AgentState) -> str:
     """
-    Routes after the classifier.
+    Routes after the risk classifier.
 
-    - Image + clinical guidance -> visual subject extraction
-    - Image without retrieval intent -> generator
+    - Multimodal turn (Image present) -> Always run visual subject extractor first (Stage 1)
     - Text requiring retrieval -> retriever
-    - Non-retrieval conversation -> generator
+    - Text casual conversation -> generator
     """
     dialog_state = state.get("dialog_state")
     requires_retrieval = state.get("requires_retrieval", False)
     has_image = bool(state.get("processed_image_payload"))
 
-    if dialog_state == "multimodal_triage":
-        if has_image and requires_retrieval:
-            logger.info(
-                "📸 Image-based clinical guidance -> Visual Subject Extractor"
-            )
-            return "visual_subject_extractor"
-
-        logger.info(
-            "🖼️ Image-based observation -> Generator"
-        )
-        return "generator"
+    if dialog_state == "multimodal_triage" or has_image:
+        logger.info("📸 Multimodal turn detected -> Routing to Visual Subject Extractor (Stage 1)")
+        return "visual_subject_extractor"
 
     if requires_retrieval:
         logger.info("🔎 Retrieval required -> Retriever")

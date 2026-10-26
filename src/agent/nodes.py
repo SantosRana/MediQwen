@@ -413,8 +413,7 @@ def run_visual_subject_extraction(state: AgentState) -> Dict[str, Any]:
     # 1. Guard Clause: Skip visual extraction if conditions are not met
     # ------------------------------------------------------------------
     if (
-        not state.get("requires_retrieval", False)
-        or state.get("dialog_state") != "multimodal_triage"
+        state.get("dialog_state") != "multimodal_triage"
         or not state.get("processed_image_payload")
     ):
         logger.info("⏩ Skipping visual subject extraction (non-guidance turn or missing payload).")
@@ -1072,6 +1071,7 @@ def run_qwen_generation(state: AgentState) -> Dict[str, Any]:
             "generation_error": None,
             "generation_latency_ms": 0.0,
         }
+        
 
     # -------------------------------------------------------------
     # 2. Defensive Evidence Invariant
